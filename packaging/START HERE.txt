@@ -1,0 +1,82 @@
+AirMouse - control your mouse with hand gestures
+================================================
+
+
+TO START
+--------
+
+  Double-click  AirMouse.exe
+
+
+  The first time, Windows may show a blue box saying
+  "Windows protected your PC".
+
+  That box appears for any program that hasn't paid for a Microsoft
+  signing certificate. It is not a virus warning.
+
+      Click "More info", then click "Run anyway".
+
+
+TO USE IT
+---------
+
+  A window opens showing what your webcam sees.
+
+  1. Hold up a flat open palm - like a high five - for about a second.
+     A circle locks onto your hand. You now have the cursor.
+
+  2. Move your hand to move the cursor.
+
+  3. Touch your thumb to your index finger to click.
+
+  4. Hold thumb and index together to drag something.
+
+  5. Lower your hand to let go. Raise it again to carry on.
+
+  Press  Q  to quit.
+  Press  B  to open settings.
+  Press  D  to see live numbers for why a gesture is or isn't firing.
+
+  There is more - scrolling, right click, volume, swipe to go back and
+  forward, and a launcher on your other hand. Press B, or read the full
+  guide at the link below.
+
+
+IF IT DOESN'T WORK
+------------------
+
+  Nothing happens / it says the camera is busy
+      Something else is using your webcam. Close Discord, Zoom, Teams,
+      OBS, or any browser tab that has camera access, then start
+      AirMouse again. Only one program can use a webcam at a time.
+
+  The cursor is jumpy, or your hand isn't detected
+      The room is probably too dark. AirMouse needs reasonable light.
+
+  Windows won't let it see the camera
+      Settings > Privacy & security > Camera
+      "Let desktop apps access your camera" must be turned On.
+
+
+WHAT THIS DOES TO YOUR COMPUTER
+-------------------------------
+
+  Nothing outside this folder.
+
+  AirMouse carries its own private copy of Python inside the _internal
+  folder. It does not install anything, does not change your PATH, and
+  does not touch a Python installation you already have.
+
+  Your settings are saved to config.json, right here in this folder.
+
+  To uninstall: delete this folder. That's all of it.
+
+
+---
+
+  Windows 10 or 11, and a webcam.
+
+  Full guide:   https://radislavdenisenko.github.io/Portfolio/airmouse/
+  Source code:  https://github.com/RadislavDenisenko/AirMouse
+
+  Radislav Denisenko - raddenisenko@gmail.com
