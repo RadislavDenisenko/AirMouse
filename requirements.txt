@@ -1,0 +1,16 @@
+# AirMouse dependencies (Windows, Python 3.12)
+#   python -m venv venv
+#   venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# Versions are the ones this was developed and tested against. Note that
+# mediapipe 0.10.35 removed the old `mp.solutions` API — this project uses
+# the Tasks API (HandLandmarker / FaceLandmarker) throughout.
+
+mediapipe==0.10.35        # hand + face landmark models
+opencv-python==5.0.0.93   # camera capture and the preview window
+numpy==2.5.1              # pulled in by mediapipe; pinned for reproducibility
+pillow==12.3.0            # Gaussian-blurred glow rendering in the settings UI
+
+# Optional: enables dragging a shortcut onto a launcher slot. Everything
+# works without it; the drop target is simply not registered.
+tkinterdnd2==0.6.2

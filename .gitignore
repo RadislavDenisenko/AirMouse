@@ -1,0 +1,30 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local, machine-specific settings written at runtime.
+# config.json is generated from config_defaults.py on first launch and
+# accumulates your own calibration, launcher bindings and slider positions,
+# so it should not be committed. Delete it to return to the shipped defaults.
+config.json
+
+# Runtime output
+screenshot.png
+Screenshot*.png
+*.log
+
+# Webcam captures. The preview window shows your face and your room, so
+# keep debug/smoke-test grabs out of the repository.
+proof/
+captures/
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
