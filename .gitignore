@@ -7,6 +7,12 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+# PyInstaller output. The packaged build is ~266 MB unpacked; it belongs on
+# the releases page, not in the history. AirMouse.spec IS tracked — it is the
+# recipe, and rebuilding from it is one command.
+build/
+dist/
+
 # Local, machine-specific settings written at runtime.
 # config.json is generated from config_defaults.py on first launch and
 # accumulates your own calibration, launcher bindings and slider positions,

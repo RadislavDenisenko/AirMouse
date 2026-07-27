@@ -24,9 +24,9 @@ import os
 import tempfile
 
 from config_defaults import DEFAULT_CONFIG
+from paths import CONFIG_PATH, USER_DIR  # noqa: F401 (CONFIG_PATH re-exported)
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+APP_DIR = USER_DIR
 
 # Keys the running tracker picks up without a restart.
 LIVE_PREFIXES = ("launcher.", "magnet.")

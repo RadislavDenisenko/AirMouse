@@ -11,7 +11,14 @@ import os
 import sys
 import time
 
-import cv2
+# OpenCV's Media Foundation backend logs a warning for every failed frame
+# grab. A webcam held by another app fails thousands of them, burying the one
+# line that tells the user what to actually do about it. Must be set before
+# cv2 is imported.
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
+
+import cv2  # noqa: E402 (import order is deliberate; see above)
 
 from config_defaults import (APP_TITLE, APP_VERSION,  # noqa: F401
                              DEFAULT_CONFIG)
@@ -24,10 +31,10 @@ from launcher import FingerLauncher, SLOT_LABELS
 from magnet import MagnetMouse, TargetFinder, resolve_params
 from mouse_input import Mouse, NullMouse, get_cursor_pos
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(APP_DIR, "hand_landmarker.task")
-FACE_MODEL_PATH = os.path.join(APP_DIR, "face_landmarker.task")
-CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+from paths import (CONFIG_PATH, FACE_MODEL as FACE_MODEL_PATH, FROZEN,
+                   HAND_MODEL as MODEL_PATH, SCREENSHOT_PATH, USER_DIR)
+
+APP_DIR = USER_DIR
 WINDOW = APP_TITLE
 
 STATE_COLORS = {IDLE: (90, 90, 255), ENGAGING: (0, 200, 255),
@@ -184,6 +191,15 @@ def open_camera(index: int, width: int = 640, height: int = 480, fps: int = 30):
     if not cap.isOpened():
         cap.release()
         cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+    # When another app holds the webcam, Media Foundation still reports the
+    # device as open but every property write then blocks for ~15s apiece,
+    # which reads as a hang before the user ever sees an explanation. One
+    # probe read costs nothing and tells us whether configuring is worth it;
+    # the caller's frame-rate check reports the failure either way.
+    if cap.isOpened():
+        ok, probe = cap.read()
+        if not (ok and probe is not None):
+            return cap
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -194,8 +210,16 @@ def open_camera(index: int, width: int = 640, height: int = 480, fps: int = 30):
 def _measure_fps(cap, n: int = 20) -> float:
     """Measured delivery rate of good frames; 0.0 if the camera isn't
     producing frames at all."""
+    # A camera held by another app fails every read, and each failure can
+    # block for seconds under Media Foundation. Give up during the warm-up
+    # rather than grinding through the full run to reach the same answer.
+    misses = 0
     for _ in range(5):
-        cap.read()
+        ok, _warm = cap.read()
+        if not (ok and _warm is not None):
+            misses += 1
+            if misses >= 3:
+                return 0.0
     good = 0
     t0 = time.perf_counter()
     for _ in range(n):
@@ -538,9 +562,15 @@ def main():
                     help="run without sending real mouse input")
     ap.add_argument("--selftest", type=float, default=0,
                     help="run N seconds, save a screenshot, then exit (for testing)")
-    ap.add_argument("--shot", default=os.path.join(APP_DIR, "screenshot.png"),
+    ap.add_argument("--shot", default=SCREENSHOT_PATH,
                     help="screenshot path for S key / selftest")
+    ap.add_argument("--settings", action="store_true",
+                    help="open the settings window instead of the tracker")
     args = ap.parse_args()
+
+    if args.settings:
+        import settings_app
+        return settings_app.main() or 0
 
     cfg = load_config()
     cam_index = args.camera if args.camera is not None else cfg["camera_index"]
@@ -761,8 +791,15 @@ def main():
             print(f"screenshot -> {args.shot}")
         if key in (ord("b"), ord("B")):
             import subprocess
-            subprocess.Popen([sys.executable,
-                              os.path.join(APP_DIR, "settings_app.py")])
+            # Frozen builds have no .py to hand to an interpreter: the exe
+            # re-launches itself with --settings instead.
+            if FROZEN:
+                cmd = [sys.executable, "--settings"]
+            else:
+                cmd = [sys.executable,
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "settings_app.py")]
+            subprocess.Popen(cmd)
             print("settings opened (launcher changes apply live; motion and "
                   "gesture changes need a restart)")
         if key in (ord("c"), ord("C")) and attention is not None:
