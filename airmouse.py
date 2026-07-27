@@ -21,7 +21,7 @@ from gestures import (GestureController, IDLE, ENGAGING, TRACKING, PINCHED,
                       RCLICK, ARMED, SCROLL, VOLUME, POINT)
 from hand_roles import RoleAssigner
 from launcher import FingerLauncher, SLOT_LABELS
-from magnet import MagnetMouse, TargetFinder
+from magnet import MagnetMouse, TargetFinder, resolve_params
 from mouse_input import Mouse, NullMouse, get_cursor_pos
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -346,21 +346,28 @@ def draw_magnet(frame, mouse):
     if not got:
         return
     rect, kind = got
+    state = getattr(mouse, "state", "")
     scale = getattr(mouse, "last_scale", 1.0)
-    if scale >= 0.995:
+    if state == "approach" and scale >= 0.995:
         return          # a target is known but too far to affect anything
     h, w = frame.shape[:2]
-    grip = int(round((1.0 - scale) * 100))
-    label = f"MAGNET  {kind}  {grip}%"
+    if state == "captured":
+        label = f"HOOKED  {kind}"
+    elif state == "escaping":
+        label = "RELEASING"
+    else:
+        label = f"MAGNET  {kind}  {int(round((1.0 - scale) * 100))}%"
     (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
     x0 = (w - tw) // 2
     cv2.putText(frame, label, (x0, h - 46), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (80, 220, 255), 2, cv2.LINE_AA)
     # a little bar showing how much the cursor is being slowed
     bx, by, bw = x0, h - 38, tw
+    # while hooked the bar shows how close you are to breaking free
+    frac = (getattr(mouse, "escape_frac", 0.0) if state == "captured"
+            else min(1.0, 1.0 - scale))
     cv2.rectangle(frame, (bx, by), (bx + bw, by + 6), (60, 60, 60), -1)
-    cv2.rectangle(frame, (bx, by),
-                  (bx + int(bw * min(1.0, 1.0 - scale)), by + 6),
+    cv2.rectangle(frame, (bx, by), (bx + int(bw * frac), by + 6),
                   (80, 220, 255), -1)
 
 
@@ -383,6 +390,11 @@ def draw_magnet_debug(frame, mouse, finder):
         rows.append((f"rect {rect[0]},{rect[1]} {rect[2] - rect[0]}x"
                      f"{rect[3] - rect[1]}", True))
         rows.append((f"distance {dist_to_rect(cur[0], cur[1], rect):.0f}px", True))
+        rows.append((f"state {getattr(mouse, 'state', '?')}",
+                     getattr(mouse, "state", "") == "captured"))
+        rows.append((f"escape {getattr(mouse, 'escape_frac', 0.0) * 100:.0f}%"
+                     f" of {getattr(mouse.hook, 'escape_px', 0):.0f}px",
+                     True))
         rows.append((f"grip {(1.0 - scale) * 100:.0f}%  (speed x{scale:.2f})",
                      scale < 1.0))
     else:
@@ -566,20 +578,20 @@ def main():
     # cursor nears them. The target hunt runs on its own thread so a Win32
     # or accessibility query can never stall the 30fps capture loop.
     mag_cfg = cfg.get("magnet", {})
-    magnet_finder = None
-    if mag_cfg.get("enabled", True):
-        magnet_finder = TargetFinder(
-            hz=mag_cfg.get("poll_hz", 12.0),
-            reach_px=mag_cfg.get("reach_px", 55.0),
-            use_msaa=mag_cfg.get("use_msaa", True)).start()
-        real_mouse = MagnetMouse(real_mouse, magnet_finder,
-                                 strength=mag_cfg.get("strength", 60.0),
-                                 reach_px=mag_cfg.get("reach_px", 55.0),
-                                 pull=mag_cfg.get("pull", 0.35))
-        print(f"magnetism ON (strength {real_mouse.strength:.0f}, "
-              f"reach {real_mouse.reach_px:.0f}px)")
-    else:
-        print("magnetism off (enable it in settings)")
+    mp_ = resolve_params(mag_cfg)
+    magnet_finder = TargetFinder(
+        hz=mag_cfg.get("poll_hz", 12.0), reach_px=mp_["reach_px"],
+        use_msaa=mag_cfg.get("use_msaa", True),
+        include_text_fields=mp_["include_text_fields"]).start()
+    real_mouse = MagnetMouse(
+        real_mouse, magnet_finder, enabled=mp_["enabled"],
+        strength=mp_["strength"], reach_px=mp_["reach_px"], pull=mp_["pull"],
+        capture_radius_px=mp_["capture_radius_px"],
+        escape_px=mp_["escape_px"], refractory_s=mp_["refractory_s"])
+    magnet_mouse = real_mouse
+    print("magnetism " + ("ON " + ("(custom tuning)" if mp_["custom"]
+                                   else "(full strength)")
+                          if mp_["enabled"] else "off"))
     controller = make_controller(real_mouse, cfg)
     paused = False
 
@@ -692,6 +704,18 @@ def main():
                 print(f"launcher: {fired + 1} finger(s) unset (press B to configure)")
         if frame_i % 30 == 0:
             launcher_cmds = read_launcher_commands()
+            launcher_labels = read_launcher_labels()
+            # magnet settings apply live — tuning with a restart in between
+            # made it impossible to tell whether a change did anything
+            fresh = resolve_params(load_config().get("magnet", {}))
+            magnet_mouse.apply_params(
+                enabled=fresh["enabled"], strength=fresh["strength"],
+                reach_px=fresh["reach_px"], pull=fresh["pull"],
+                capture_radius_px=fresh["capture_radius_px"],
+                escape_px=fresh["escape_px"],
+                refractory_s=fresh["refractory_s"])
+            magnet_finder.reach_px = fresh["reach_px"]
+            magnet_finder.include_text_fields = fresh["include_text_fields"]
             launcher_labels = read_launcher_labels()
 
         if cursor_pts and info.get("mode") == POINT:

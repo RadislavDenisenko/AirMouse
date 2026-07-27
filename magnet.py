@@ -53,6 +53,22 @@ MSAA_ROLES = {43: "button", 30: "link", 12: "menu item", 44: "checkbox",
 MIN_SCALE = 0.15
 MAX_SLOW = 1.0 - MIN_SCALE
 
+# The simple preset: what magnetism does with one toggle and no tuning. These
+# are deliberately strong — the whole point is that it grabs without being
+# configured. Custom mode swaps these for the config values.
+PRESET = {
+    "strength": 80.0,
+    "reach_px": 90.0,
+    "pull": 0.45,
+    "capture_radius_px": 40.0,
+    "escape_px": 40.0,
+    "refractory_s": 0.3,
+    "include_text_fields": False,
+}
+
+# How committed a movement has to be before a captured target lets go.
+ESCAPE_EFFORT = {"light": 24.0, "medium": 40.0, "heavy": 64.0}
+
 
 # ------------------------------------------------------------- pure maths ---
 def dist_to_rect(x, y, rect):
@@ -61,6 +77,34 @@ def dist_to_rect(x, y, rect):
     dx = max(l - x, 0, x - r)
     dy = max(t - y, 0, y - b)
     return math.hypot(dx, dy)
+
+
+def dist_segment_rect(p0, p1, rect, step_px=4.0):
+    """Closest the cursor gets to a rect while travelling p0 -> p1.
+
+    This is what makes the hook work: at high sensitivity one frame can move
+    the pointer further than a close button is wide, so testing only the
+    start and end points misses a pass straight over the target."""
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    n = max(1, min(32, int(length / max(1.0, step_px)) + 1))
+    best = float("inf")
+    for i in range(n + 1):
+        t = i / n
+        d = dist_to_rect(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, rect)
+        if d < best:
+            best = d
+        if best <= 0.0:
+            break
+    return best
+
+
+def rects_match(a, b, tol=10):
+    """Whether two probes found the same control (rects wobble slightly)."""
+    if a is None or b is None:
+        return False
+    return all(abs(a[i] - b[i]) <= tol for i in range(4))
 
 
 def apply_magnet(dx, dy, cursor, rect, strength, reach_px, pull=0.35):
@@ -121,6 +165,26 @@ def slowdown_factor(cursor, rect, strength, reach_px):
         return 1.0
     s = max(0.0, min(1.0, strength / 100.0))
     return 1.0 - MAX_SLOW * s * (1.0 - d / reach_px)
+
+
+def resolve_params(mag_cfg):
+    """Effective magnet parameters from a config block.
+
+    Simple mode (the default) ignores the sliders entirely and uses PRESET,
+    so a fresh install is strong without being configured, and leaving the
+    sliders somewhere odd can never weaken it. Custom tuning swaps in the
+    config values."""
+    cfg = mag_cfg or {}
+    out = dict(PRESET)
+    out["enabled"] = bool(cfg.get("enabled", True))
+    out["custom"] = bool(cfg.get("custom_tuning", False))
+    if out["custom"]:
+        for key in ("strength", "reach_px", "pull", "capture_radius_px",
+                    "escape_px", "refractory_s"):
+            if cfg.get(key) is not None:
+                out[key] = float(cfg[key])
+        out["include_text_fields"] = bool(cfg.get("include_text_fields", False))
+    return out
 
 
 # ------------------------------------------------------------ target hunt ---
@@ -317,9 +381,11 @@ class _MsaaProbe:
 class TargetFinder:
     """Polls for the target near the cursor on a background thread."""
 
-    def __init__(self, hz=12.0, reach_px=40.0, use_msaa=True):
+    def __init__(self, hz=12.0, reach_px=40.0, use_msaa=True,
+                 include_text_fields=False):
         self.period = 1.0 / max(1.0, hz)
         self.reach_px = reach_px
+        self.include_text_fields = include_text_fields
         self._msaa = _MsaaProbe() if use_msaa else None
         self._lock = threading.Lock()
         self._target = None           # (rect, kind, stamp)
@@ -347,6 +413,16 @@ class TargetFinder:
             return None
         return rect, kind
 
+    def _keep(self, hit):
+        """Text fields are excluded by default: hooking onto them fights you
+        when you are aiming at text rather than at a control."""
+        if hit is None:
+            return None
+        if not self.include_text_fields and hit[1] in ("text field",
+                                                       "combo box"):
+            return None
+        return hit
+
     def _find(self, x, y):
         try:
             hit = caption_button_at(x, y, radius=int(self.reach_px) + 8)
@@ -355,13 +431,13 @@ class TargetFinder:
         except Exception:
             self.errors += 1
         try:
-            hit = child_control_at(x, y)
+            hit = self._keep(child_control_at(x, y))
             if hit:
                 return hit
         except Exception:
             self.errors += 1
         if self._msaa is not None:
-            hit = self._msaa.at(x, y)
+            hit = self._keep(self._msaa.at(x, y))
             if hit:
                 return hit
         return None
@@ -381,43 +457,187 @@ class TargetFinder:
             time.sleep(max(0.0, self.period - (time.perf_counter() - t0)))
 
 
-# ------------------------------------------------------------- the wrapper ---
-class MagnetMouse:
-    """Wraps a mouse backend and bends its motion around nearby targets.
 
-    Everything except `move` (and drag tracking) is delegated untouched, so
-    clicks, scrolling and navigation behave exactly as before.
+# --------------------------------------------------------------- the hook ---
+class Hooker:
+    """Capture-and-hold: the behaviour that makes magnetism feel like a hook.
+
+    Damping alone was never enough. At sensitivity 9 a single frame can move
+    the pointer further than a close button is wide, so the cursor could sail
+    clean over a target however heavily it was slowed. Instead:
+
+      * **capture** — if this frame's motion path passes near a target, the
+        cursor snaps onto its centre instead of flying past;
+      * **hold** — while captured the cursor is parked; small hand movements
+        do nothing at all, so it genuinely feels stuck to the control;
+      * **escape** — motion accumulates as a vector while held, so only
+        *committed* movement in one direction adds up (wobble cancels
+        itself out). Past the threshold the target lets go and a short
+        refractory stops it grabbing the same thing again straight away.
+
+    A still hand still never moves the cursor: every path here returns zero
+    motion for zero input.
     """
 
-    def __init__(self, inner, finder, strength=50.0, reach_px=40.0,
-                 pull=0.35, enabled=True):
-        self.inner = inner
-        self.finder = finder
+    LOST_GRACE_S = 0.4     # keep the hook through a brief detection dropout
+
+    def __init__(self, strength=80.0, reach_px=90.0, pull=0.45,
+                 capture_radius_px=40.0, escape_px=40.0, refractory_s=0.3):
         self.strength = strength
         self.reach_px = reach_px
         self.pull = pull
+        self.capture_radius_px = capture_radius_px
+        self.escape_px = escape_px
+        self.refractory_s = refractory_s
+        self.reset()
+
+    def reset(self):
+        self.captured = None          # rect currently held
+        self.state = "idle"           # idle | approach | captured | escaping
+        self.escape_frac = 0.0        # 0..1 progress toward letting go
+        self._sum = [0.0, 0.0]        # committed motion while held
+        self._released = None         # last rect let go of, for the refractory
+        self._refractory_until = 0.0
+        self._lost_since = None
+
+    def step(self, dx, dy, cursor, rect, now):
+        """One frame. Returns the motion to actually apply, as floats."""
+        if dx == 0 and dy == 0:
+            if self.captured is None:
+                self.state = "approach" if rect is not None else "idle"
+            return 0.0, 0.0
+
+        if self.captured is not None:
+            # tolerate the finder briefly losing the control we are holding
+            if rect is None:
+                if self._lost_since is None:
+                    self._lost_since = now
+                elif now - self._lost_since > self.LOST_GRACE_S:
+                    self._let_go(now)
+                    self.state = "idle"   # the control is simply gone
+                    return float(dx), float(dy)
+            else:
+                self._lost_since = None
+                if rects_match(rect, self.captured):
+                    self.captured = rect      # track small rect wobble
+
+            self._sum[0] += dx
+            self._sum[1] += dy
+            committed = math.hypot(self._sum[0], self._sum[1])
+            self.escape_frac = min(1.0, committed / max(1e-6, self.escape_px))
+            if committed >= self.escape_px:
+                self._let_go(now)
+                self.state = "escaping"
+                return float(dx), float(dy)   # pop out along the way you left
+            self.state = "captured"
+            return 0.0, 0.0                   # parked on the target
+
+        if rect is None:
+            self.state = "idle"
+            self.escape_frac = 0.0
+            return float(dx), float(dy)
+
+        blocked = (now < self._refractory_until
+                   and rects_match(rect, self._released))
+        if not blocked:
+            projected = (cursor[0] + dx, cursor[1] + dy)
+            if dist_segment_rect(cursor, projected,
+                                 rect) <= self.capture_radius_px:
+                self.captured = rect
+                self._sum = [0.0, 0.0]
+                self.escape_frac = 0.0
+                self.state = "captured"
+                self._lost_since = None
+                cx = (rect[0] + rect[2]) / 2.0
+                cy = (rect[1] + rect[3]) / 2.0
+                return cx - cursor[0], cy - cursor[1]      # snap on
+
+        self.state = "approach"
+        self.escape_frac = 0.0
+        return apply_magnet(dx, dy, cursor, rect, self.strength,
+                            self.reach_px, self.pull)
+
+    def _let_go(self, now):
+        self._released = self.captured
+        self._refractory_until = now + self.refractory_s
+        self.captured = None
+        self._sum = [0.0, 0.0]
+        self.escape_frac = 0.0
+        self._lost_since = None
+
+
+# ------------------------------------------------------------- the wrapper ---
+class MagnetMouse:
+    """Wraps a mouse backend and hooks its motion onto nearby targets.
+
+    Everything except `move` (and drag tracking) is delegated untouched, so
+    clicks, scrolling and navigation behave exactly as before. Parameters are
+    live-tunable: `apply_params` is called from the capture loop when
+    config.json changes, so tuning takes effect without a restart.
+    """
+
+    def __init__(self, inner, finder, strength=80.0, reach_px=90.0,
+                 pull=0.45, enabled=True, capture_radius_px=40.0,
+                 escape_px=40.0, refractory_s=0.3):
+        self.inner = inner
+        self.finder = finder
         self.enabled = enabled
+        self.hook = Hooker(strength, reach_px, pull, capture_radius_px,
+                           escape_px, refractory_s)
         self._res = [0.0, 0.0]
         self._dragging = False
         self.last_target = None       # (rect, kind) for the overlay
         self.last_scale = 1.0
 
+    # -- live tuning ------------------------------------------------------
+    def apply_params(self, enabled=None, **params):
+        if enabled is not None and enabled != self.enabled:
+            self.enabled = enabled
+            self.hook.reset()
+        for name, value in params.items():
+            if value is not None and hasattr(self.hook, name):
+                setattr(self.hook, name, value)
+
+    @property
+    def strength(self):
+        return self.hook.strength
+
+    @property
+    def reach_px(self):
+        return self.hook.reach_px
+
+    @property
+    def state(self):
+        return "off" if not self.enabled else self.hook.state
+
+    @property
+    def escape_frac(self):
+        return self.hook.escape_frac
+
     def move(self, dx, dy):
-        rect = kind = None
-        if self.enabled and not self._dragging:
-            got = self.finder.current() if self.finder else None
-            if got:
-                rect, kind = got
-        self.last_target = (rect, kind) if rect else None
-        if rect is None:
+        if not self.enabled or self._dragging:
+            self.last_target = None
             self.last_scale = 1.0
+            if self.hook.captured is not None:
+                self.hook.reset()
             self.inner.move(dx, dy)
             return
+
+        got = self.finder.current() if self.finder else None
+        rect, kind = got if got else (None, None)
+        # while holding something, keep reporting it even if this poll missed
+        if rect is None and self.hook.captured is not None:
+            rect, kind = self.hook.captured, "held"
+        self.last_target = (rect, kind) if rect else None
+
         cursor = get_cursor_pos()
-        self.last_scale = slowdown_factor(cursor, rect, self.strength,
-                                          self.reach_px)
-        ox, oy = apply_magnet(dx, dy, cursor, rect, self.strength,
-                              self.reach_px, self.pull)
+        ox, oy = self.hook.step(dx, dy, cursor,
+                                rect if got or self.hook.captured else None,
+                                time.perf_counter())
+        moved = math.hypot(ox, oy)
+        asked = math.hypot(dx, dy)
+        self.last_scale = (moved / asked) if asked > 1e-6 else 1.0
+
         # carry the sub-pixel remainder so slow motion can never stall
         self._res[0] += ox
         self._res[1] += oy
@@ -429,6 +649,7 @@ class MagnetMouse:
 
     def left_down(self):
         self._dragging = True         # dragging past a target must not stick
+        self.hook.reset()
         self.inner.left_down()
 
     def left_up(self):

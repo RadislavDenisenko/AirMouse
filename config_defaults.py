@@ -52,8 +52,14 @@ DEFAULT_CONFIG = {
     # of the motion you are already making. `use_msaa` adds accessibility
     # queries for controls that draw themselves (most modern UI) on top of
     # the cheap Win32 tiers.
-    "magnet": {"enabled": True, "strength": 70.0, "reach_px": 60.0,
-               "pull": 0.35, "use_msaa": True, "poll_hz": 12.0},
+    # Cursor magnetism. Simple mode (custom_tuning False) ignores the tuning
+    # values below and uses magnet.PRESET, so one toggle gives a strong hook
+    # with no configuration. The rest only apply once custom tuning is on.
+    "magnet": {"enabled": True, "custom_tuning": False,
+               "strength": 80.0, "reach_px": 90.0, "pull": 0.45,
+               "capture_radius_px": 40.0, "escape_px": 40.0,
+               "refractory_s": 0.3, "include_text_fields": False,
+               "use_msaa": True, "poll_hz": 12.0},
     "launcher": {"hold_s": 0.3, "cooldown_s": 1.0,
                  "commands": ["", "", "", ""],
                  "labels": ["", "", "", ""]},

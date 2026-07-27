@@ -14,8 +14,8 @@ buried in UI callbacks:
   * which keys the tracker re-reads live vs. only at startup, so the UI can
     say "after restart" instead of lying.
 
-The tracker re-reads only the launcher block while running (see
-airmouse.read_launcher_commands); everything else is read once at startup.
+The tracker re-reads the launcher and magnet blocks while running, so those
+apply without a restart; everything else is read once at startup.
 """
 
 import copy
@@ -29,7 +29,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 # Keys the running tracker picks up without a restart.
-LIVE_PREFIXES = ("launcher.",)
+LIVE_PREFIXES = ("launcher.", "magnet.")
 
 
 # ------------------------------------------------------------ dotted paths ---
@@ -305,14 +305,29 @@ SECTIONS = (
              "key": "magnet.enabled",
              "caption": "*Buttons grab your cursor* — like a TV remote. "
                         "*Push through* to break free."},
+            {"kind": "toggle", "label": "Custom tuning",
+             "key": "magnet.custom_tuning",
+             "caption": "*Off means full strength* with nothing to set. Turn "
+                        "it on to use the sliders below."},
+            {"kind": "slider", "label": "Grab range",
+             "key": "magnet.capture_radius_px", "lo": 10.0, "hi": 90.0,
+             "fmt": "{:.0f}", "advanced": True,
+             "caption": "*How near a pass has to be* for the cursor to hook "
+                        "on. Needs custom tuning."},
+            {"kind": "slider", "label": "Escape effort",
+             "key": "magnet.escape_px", "lo": 15.0, "hi": 90.0,
+             "fmt": "{:.0f}", "advanced": True,
+             "caption": "*How far to move to break free* of a hooked "
+                        "target. Needs custom tuning."},
             {"kind": "slider", "label": "Pull strength",
              "key": "magnet.strength", "lo": 0.0, "hi": 100.0, "fmt": "{:.0f}",
-             "caption": "*How hard it holds* once a button has caught the "
-                        "cursor."},
+             "advanced": True,
+             "caption": "*How much it slows you on approach*, before it "
+                        "hooks. Needs custom tuning."},
             {"kind": "slider", "label": "Reach", "key": "magnet.reach_px",
-             "lo": 8.0, "hi": 120.0, "fmt": "{:.0f}",
-             "caption": "*How close before it grabs* — more reach catches "
-                        "buttons from farther away."},
+             "lo": 8.0, "hi": 160.0, "fmt": "{:.0f}", "advanced": True,
+             "caption": "*How far out it starts to bite.* Needs custom "
+                        "tuning."},
             {"kind": "slider", "label": "Centring pull", "key": "magnet.pull",
              "lo": 0.0, "hi": 1.0, "fmt": "{:.2f}", "advanced": True,
              "caption": "*How much it steers toward the middle* of a target. "

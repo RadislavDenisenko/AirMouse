@@ -41,7 +41,7 @@ def hand(px, py, pinch_dist=60.0, tip="index"):
     fingertip, approaching from the thumb's natural rest side (below-left).
     When actually pinching (dist < 45) the finger curls down to meet the
     thumb, like a real pinch. Hand size is 100 px, so ratio = pinch_dist/100.
-    (Shared by test_pinch / test_v2 / test_v3 — lives here because this module
+    (Shared by the other suites — lives here because this module
     is import-safe: its tests only run under __main__.)"""
     import math
     pts = list(synthetic_hand(px, py))
@@ -58,7 +58,7 @@ def hand(px, py, pinch_dist=60.0, tip="index"):
 
 def peace_hand(px, py):
     """Peace sign: index+middle extended, ring+pinky curled, thumb at rest.
-    Lives here (not in test_v2) because this module is import-safe — its
+    Lives here, not in a suite, because this module is import-safe — its
     checks only run under __main__, so importing it can't sys.exit the caller."""
     pts = list(synthetic_hand(px, py))
     for b in (13, 17):                     # ring, pinky bases

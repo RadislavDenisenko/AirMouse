@@ -9,8 +9,10 @@ _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _APP_DIR = os.path.dirname(_TESTS_DIR)
 sys.path.insert(0, _APP_DIR)
 
-from magnet import (MIN_SCALE, MagnetMouse, apply_magnet, caption_button_at,
-                    dist_to_rect, slowdown_factor)
+from magnet import (ESCAPE_EFFORT, MIN_SCALE, PRESET, Hooker, MagnetMouse,
+                    apply_magnet, caption_button_at, dist_segment_rect,
+                    dist_to_rect, rects_match, resolve_params,
+                    slowdown_factor)
 from mouse_input import NullMouse
 
 failures = []
@@ -98,6 +100,154 @@ while x <= RECT[2] + 40 and frames < 200:
     frames += 1
 check("escaping takes a reasonable number of frames", frames <= 60,
       f"frames={frames}")
+
+# ===================== segment geometry (the fly-past fix) ===================
+# A 60px frame step straight over a 34px button: endpoints both miss it, the
+# path does not. This is the whole reason capture is predictive.
+check("endpoints alone miss a fly-past",
+      dist_to_rect(60, 110, RECT) > 0 and dist_to_rect(180, 110, RECT) > 0)
+check("the travelled path detects the fly-past",
+      dist_segment_rect((60, 110), (180, 110), RECT) == 0)
+check("a path that stays clear reports a real distance",
+      dist_segment_rect((60, 200), (180, 200), RECT) > 50)
+check("a zero-length path equals a point test",
+      dist_segment_rect((60, 110), (60, 110), RECT)
+      == dist_to_rect(60, 110, RECT))
+
+check("rects_match tolerates small wobble",
+      rects_match((100, 100, 140, 120), (103, 98, 141, 122)))
+check("rects_match rejects a different control",
+      not rects_match((100, 100, 140, 120), (400, 300, 440, 320)))
+check("rects_match handles None", not rects_match(None, RECT))
+
+# =========================== simple vs custom ================================
+simple = resolve_params({"enabled": True})
+check("simple mode uses the strong preset",
+      simple["strength"] == PRESET["strength"]
+      and simple["capture_radius_px"] == PRESET["capture_radius_px"]
+      and simple["custom"] is False)
+check("simple mode ignores whatever the sliders were left at",
+      resolve_params({"enabled": True, "strength": 3.0,
+                      "escape_px": 1.0})["strength"] == PRESET["strength"])
+custom = resolve_params({"enabled": True, "custom_tuning": True,
+                         "strength": 25.0, "escape_px": 18.0})
+check("custom tuning uses the config values",
+      custom["strength"] == 25.0 and custom["escape_px"] == 18.0
+      and custom["custom"] is True)
+check("custom keeps preset values for keys left unset",
+      custom["capture_radius_px"] == PRESET["capture_radius_px"])
+check("enabled is honoured", resolve_params({"enabled": False})["enabled"]
+      is False)
+check("an empty config still resolves", resolve_params(None)["enabled"] is True)
+check("text fields are excluded by default",
+      simple["include_text_fields"] is False)
+check("escape efforts are ordered light < medium < heavy",
+      ESCAPE_EFFORT["light"] < ESCAPE_EFFORT["medium"] < ESCAPE_EFFORT["heavy"])
+
+# ============================ capture and hold ===============================
+def fresh_hook(**kw):
+    p = {k: v for k, v in PRESET.items() if k != "include_text_fields"}
+    p.update(kw)
+    return Hooker(**p)
+
+
+# the fly-past case: motion that would overshoot hooks on instead
+h = fresh_hook()
+out = h.step(60, 0, (60, 110), RECT, 0.0)
+check("a fly-past captures the target", h.state == "captured")
+check("capture snaps the cursor onto the centre",
+      abs((60 + out[0]) - 120) < 0.01 and abs((110 + out[1]) - 110) < 0.01,
+      f"landed at {60 + out[0]:.1f},{110 + out[1]:.1f}")
+
+# once hooked, small movements do nothing at all
+h2 = fresh_hook()
+h2.step(60, 0, (60, 110), RECT, 0.0)
+drift = [h2.step(3, 1, CENTRE, RECT, 0.1 + i * 0.03) for i in range(5)]
+check("a hooked cursor does not drift under small moves",
+      all(d == (0.0, 0.0) for d in drift), f"drift={drift}")
+check("still hooked after the small moves", h2.state == "captured")
+
+# wobble cancels itself out: back-and-forth never escapes
+h3 = fresh_hook()
+h3.step(60, 0, (60, 110), RECT, 0.0)
+t = 0.1
+for i in range(40):
+    t += 0.03
+    h3.step(8 if i % 2 == 0 else -8, 0, CENTRE, RECT, t)
+check("wobbling in place never breaks the hook", h3.state == "captured",
+      f"state={h3.state} escape={h3.escape_frac:.2f}")
+
+# committed motion in one direction does escape
+h4 = fresh_hook()
+h4.step(60, 0, (60, 110), RECT, 0.0)
+t, escaped_at = 0.1, None
+for i in range(40):
+    t += 0.03
+    h4.step(6, 0, CENTRE, RECT, t)
+    if h4.state != "captured":
+        escaped_at = (i + 1) * 6
+        break
+check("committed motion escapes the hook", escaped_at is not None,
+      f"state={h4.state}")
+check("escape takes about the configured distance",
+      escaped_at is not None
+      and PRESET["escape_px"] <= escaped_at <= PRESET["escape_px"] + 12,
+      f"escaped after {escaped_at}px (threshold {PRESET['escape_px']})")
+
+# escape progress is reported for the overlay
+h5 = fresh_hook()
+h5.step(60, 0, (60, 110), RECT, 0.0)
+h5.step(10, 0, CENTRE, RECT, 0.2)
+check("escape progress is reported", 0.0 < h5.escape_frac < 1.0,
+      f"frac={h5.escape_frac:.2f}")
+
+# the refractory stops instant re-capture of the same target
+h6 = fresh_hook()
+h6.step(60, 0, (60, 110), RECT, 0.0)
+t = 0.1
+while h6.state == "captured" and t < 2.0:
+    t += 0.03
+    h6.step(10, 0, CENTRE, RECT, t)
+after = h6.step(4, 0, (200, 110), RECT, t + 0.01)
+check("the same target is not re-captured immediately",
+      h6.state != "captured", f"state={h6.state}")
+later = h6.step(4, 0, (118, 110), RECT, t + 1.0)
+check("it can be captured again once the refractory passes",
+      h6.state == "captured")
+
+# a different target may be captured straight away
+h7 = fresh_hook()
+h7.step(60, 0, (60, 110), RECT, 0.0)
+t = 0.1
+while h7.state == "captured" and t < 2.0:
+    t += 0.03
+    h7.step(10, 0, CENTRE, RECT, t)
+other = (400, 300, 440, 320)
+h7.step(4, 0, (398, 310), other, t + 0.01)
+check("a different target captures without waiting",
+      h7.state == "captured")
+
+# a still hand never moves the cursor, hooked or not
+h8 = fresh_hook()
+check("still hand, no target: nothing happens",
+      h8.step(0, 0, (60, 110), None, 0.0) == (0.0, 0.0))
+h8.step(60, 0, (60, 110), RECT, 0.1)
+check("still hand while hooked: nothing happens",
+      h8.step(0, 0, CENTRE, RECT, 0.2) == (0.0, 0.0))
+check("hook survives a still frame", h8.state == "captured")
+
+# losing detection briefly keeps the hook; losing it for good releases
+h9 = fresh_hook()
+h9.step(60, 0, (60, 110), RECT, 0.0)
+h9.step(2, 0, CENTRE, None, 0.15)
+check("a brief detection dropout keeps the hook", h9.state == "captured")
+h9.step(2, 0, CENTRE, None, 1.2)
+check("a long dropout lets go", h9.state != "captured")
+
+# no target at all is a clean pass-through
+h10 = fresh_hook()
+check("no target passes motion straight through",
+      h10.step(7, -3, (0, 0), None, 0.0) == (7.0, -3.0))
 
 # ============================ debug readout ==================================
 check("slowdown factor is 1.0 with no target",
