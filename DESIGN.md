@@ -4,8 +4,8 @@ Design and implementation notes for the AirMouse settings app. This is the
 reference for anyone extending the UI: it records the visual system, the
 motion rules, and the constraints that shaped both.
 
-Status: **beta.** The design is settled; some sections tune features that
-are still in progress (see *Not wired up yet*).
+Status: **beta.** The design is settled, and every section now tunes a
+feature the tracker actually consumes (see *Controls ahead of features*).
 
 ---
 
@@ -221,13 +221,19 @@ chained stages abort if the state changed underneath them.
 - When a control occupies a card's title row, pass `hint_reserve` so the
   "after restart" hint isn't drawn underneath it.
 
-## 6. Not wired up yet
+## 6. Controls ahead of features
 
-The **Magnet** section is built and its settings persist, but the tracker
-does not consume them — cursor magnetism is still in progress. The section
-carries a visible "not wired up yet" tag so the UI never claims a feature
-that isn't there. Apply the same rule to anything added ahead of its
-implementation.
+Every section currently drives something real: the **Magnet** section shipped
+before cursor magnetism existed, and the tracker has consumed those settings
+since magnetism landed. Both `launcher.*` and `magnet.*` are in
+`LIVE_PREFIXES`, so their controls apply without a restart.
+
+The rule that episode produced is the part worth keeping. A control that
+tunes nothing is worse than a missing one — it invites you to tune a feature
+and conclude it does nothing. So if a section has to ship ahead of its
+feature, it carries a visible tag saying so: set `pending` on the section in
+`SECTIONS` and `settings_app` draws that text under the section intro in the
+warning colour. No section sets it today, and that is the state to return to.
 
 ## 7. Conventions
 

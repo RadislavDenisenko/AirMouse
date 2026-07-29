@@ -47,19 +47,20 @@ DEFAULT_CONFIG = {
     "volume": {"enabled": True, "steps_per_hs": 8.0, "down_ratio": 0.28,
                "up_ratio": 0.38, "debounce_frames": 2},
     "roles": {"launcher_cooldown_s": 1.0},
-    # Cursor magnetism: clickable things get sticky as the cursor nears
-    # them. `pull` is how hard it draws toward a target's centre, as a share
-    # of the motion you are already making. `use_msaa` adds accessibility
-    # queries for controls that draw themselves (most modern UI) on top of
-    # the cheap Win32 tiers.
-    # Cursor magnetism. Simple mode (custom_tuning False) ignores the tuning
-    # values below and uses magnet.PRESET, so one toggle gives a strong hook
-    # with no configuration. The rest only apply once custom tuning is on.
+    # Cursor magnetism: clickable things get sticky as the cursor nears them.
+    # Simple mode (custom_tuning False) ignores the tuning values below and
+    # uses magnet.PRESET, so one toggle gives a strong hook with no
+    # configuration; the rest only apply once custom tuning is on. `pull` is
+    # how hard it draws toward a target's centre, as a share of the motion
+    # you are already making. `use_msaa` and `use_uia` are the two
+    # accessibility tiers that find controls drawing themselves (most modern
+    # UI, including the close button on each Chrome tab) on top of the cheap
+    # Win32 ones — escape hatches, in case some app misbehaves under them.
     "magnet": {"enabled": True, "custom_tuning": False,
                "strength": 80.0, "reach_px": 90.0, "pull": 0.45,
                "capture_radius_px": 40.0, "escape_px": 40.0,
                "refractory_s": 0.3, "include_text_fields": False,
-               "use_msaa": True, "poll_hz": 12.0},
+               "use_msaa": True, "use_uia": True, "poll_hz": 12.0},
     "launcher": {"hold_s": 0.3, "cooldown_s": 1.0,
                  "commands": ["", "", "", ""],
                  "labels": ["", "", "", ""]},

@@ -16,9 +16,25 @@ Finding targets, cheapest first:
   2. **Classic Win32 child controls.** `RealChildWindowFromPoint` plus the
      window class name catches real buttons in dialogs and older apps.
   3. **MSAA.** `AccessibleObjectFromPoint` reaches controls that draw
-     themselves, which is most modern UI. This one talks COM through
-     ctypes, so every call is wrapped — if it misbehaves on some app the
-     finder silently falls back to the cheaper tiers.
+     themselves, which is most modern UI — including the close button on
+     each Chrome tab.
+  4. **UI Automation.** The same question asked through the newer API. It
+     answers on windows where MSAA stays silent, and it returns the
+     control's name, which is what the D readout shows you.
+
+Tiers 3 and 4 talk COM through ctypes, so every call is wrapped: if either
+misbehaves on some app the finder falls back to the cheaper tiers instead of
+taking the tracker down with it.
+
+**Chromium builds its accessibility tree lazily.** Nothing is there to find
+until something asks — an assistive tool announces itself by sending
+`WM_GETOBJECT`, and the tree is built asynchronously a beat later. `wake()`
+sends that nudge. It must *retry*: a window is only recorded as awake once a
+probe has actually read something out of it, because a nudge that arrives at
+the wrong moment (or a Chrome that later drops accessibility again because
+it thinks nothing is listening) would otherwise leave that window marked
+done and never asked again. That single missing retry is why tab buttons
+worked from a test script and never from inside the app.
 
 All of that runs on a background thread and is cached, because a Win32 or
 COM query can take milliseconds and the capture loop has a 33 ms budget.
@@ -30,6 +46,7 @@ import ctypes
 import math
 import threading
 import time
+from collections import deque
 from ctypes import wintypes
 
 from mouse_input import get_cursor_pos
@@ -37,6 +54,9 @@ from mouse_input import get_cursor_pos
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 WM_NCHITTEST = 0x0084
+WM_GETOBJECT = 0x003D
+OBJID_CLIENT = 0xFFFFFFFC
+OBJID_UIA = 0xFFFFFFE7          # UiaRootObjectId (-25)
 SMTO_ABORTIFHUNG = 0x0002
 GA_ROOT = 2
 
@@ -47,6 +67,25 @@ HIT_KINDS = {20: "close button", 8: "minimise button", 9: "maximise button"}
 MSAA_ROLES = {43: "button", 30: "link", 12: "menu item", 44: "checkbox",
               45: "radio button", 46: "combo box", 42: "text field",
               50: "text field"}
+
+# The same vocabulary in UI Automation's control-type ids, so both COM tiers
+# hand back kinds the rest of the module already understands.
+UIA_KINDS = {50000: "button", 50031: "button", 50002: "checkbox",
+             50013: "radio button", 50005: "link", 50011: "menu item",
+             50003: "combo box", 50004: "text field"}
+
+CLSID_CUIAUTOMATION = "{ff48dba4-60ef-4201-aa87-54103eef594e}"
+IID_IUIAUTOMATION = "{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}"
+
+# Anything bigger than this is a container or a pane, not something you aim
+# at, and hooking onto it would fight every normal cursor movement.
+MAX_TARGET_W = 600
+MAX_TARGET_H = 400
+
+# How far below a window's top edge a caption button can still plausibly be.
+# Generous: custom title bars (Chrome's tab strip, Explorer's ribbon) are
+# taller than the standard one.
+CAPTION_BAND_PX = 60
 
 # Never slow the cursor below this fraction of its normal speed, so a target
 # can always be pushed out of no matter how strong the magnet is.
@@ -188,6 +227,32 @@ def resolve_params(mag_cfg):
 
 
 # ------------------------------------------------------------ target hunt ---
+class _GUID(ctypes.Structure):
+    _fields_ = [("d1", ctypes.c_ulong), ("d2", ctypes.c_ushort),
+                ("d3", ctypes.c_ushort), ("d4", ctypes.c_ubyte * 8)]
+
+
+def _guid(text):
+    g = _GUID()
+    ctypes.oledll.ole32.CLSIDFromString(text, ctypes.byref(g))
+    return g
+
+
+def ensure_com():
+    """Initialise COM for the calling thread, tolerantly.
+
+    COM is per-thread, so the finder thread must do this itself or every COM
+    call from it fails silently. Deliberately `windll` and not `oledll`: an
+    already-initialised thread answers S_FALSE, and a thread someone else got
+    to first answers RPC_E_CHANGED_MODE — `oledll` would raise on the latter,
+    and a raise here would disable a whole tier for the life of the process.
+    """
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0)   # COINIT_MULTITHREADED
+    except Exception:
+        pass
+
+
 def _lparam(x, y):
     return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
 
@@ -201,19 +266,31 @@ def _hit_test(hwnd, x, y, timeout_ms=30):
     return int(res.value) if ok else None
 
 
-def caption_button_at(x, y, radius=44, coarse=8, budget_s=0.05):
+def caption_button_at(x, y, radius=44, coarse=10, budget_s=0.012):
     """A window's close/minimise/maximise button near (x, y), as
     ((l, t, r, b), kind) — or None.
 
-    `budget_s` caps the whole probe: a window belonging to a busy or dying
-    process answers slowly even with a per-call timeout, and a stale handle
-    can otherwise burn hundreds of milliseconds of the finder thread."""
+    `budget_s` caps the whole probe, and the cap matters more than it looks:
+    a *hit* is found in the first ring or two and costs about a millisecond,
+    but an exhaustive *miss* at full reach is some six hundred cross-process
+    messages. Over a Chrome tab strip — where the answer is always no, and
+    the tier that can actually help comes later — that was eating 20 ms of
+    every poll. Caption buttons are far larger than the step, so the coarse
+    grid never walks past one."""
     deadline = time.perf_counter() + budget_s
     pt = wintypes.POINT(int(x), int(y))
     hwnd = _user32.WindowFromPoint(pt)
     if not hwnd:
         return None
     hwnd = _user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+
+    # A caption button is in the caption, which is at the top of the window.
+    # Far below it there is nothing to find, so don't pay for the search —
+    # this is most of the screen most of the time.
+    rc = wintypes.RECT()
+    if (_user32.GetWindowRect(hwnd, ctypes.byref(rc))
+            and y - rc.top > radius + CAPTION_BAND_PX):
+        return None
 
     hit = None
     # coarse scan outward from the cursor: the first ring that lands on a
@@ -294,13 +371,98 @@ def child_control_at(x, y):
     return (rc.left, rc.top, rc.right, rc.bottom), kind
 
 
+def _vtbl(obj, index, restype, *argtypes):
+    """Call slot `index` of a COM object's vtable. Both COM tiers here are
+    raw ctypes rather than a generated wrapper, so no extra dependency ends
+    up in the packaged build."""
+    vtable = ctypes.cast(obj, ctypes.POINTER(ctypes.c_void_p))[0]
+    fn_ptr = ctypes.cast(vtable, ctypes.POINTER(ctypes.c_void_p))[index]
+    proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
+    return proto(fn_ptr)
+
+
+def _com_release(obj):
+    try:
+        _vtbl(obj, 2, ctypes.c_ulong)(obj)
+    except Exception:
+        pass
+
+
+def _root_at(x, y):
+    """The top-level window under a screen point, or 0."""
+    hwnd = _user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
+    if not hwnd:
+        return 0
+    return _user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+
+
+class _Waker:
+    """Nudges lazily-built accessibility trees into existence, and retries.
+
+    Chromium apps expose nothing until an assistive tool asks, so we send the
+    same `WM_GETOBJECT` one would. The important part is what counts as done:
+    a window is only remembered as awake once a probe has actually read a
+    control out of it (`proven`). Nudges that didn't take are retried on a
+    cooldown, a handful of times, because the tree is built asynchronously
+    and because Chrome will drop accessibility again if it decides nothing is
+    listening. Marking a window done at nudge time — the original bug — meant
+    one badly-timed nudge disabled tab buttons for that window forever.
+    """
+
+    RETRY_S = 1.0
+    ATTEMPTS = 6
+    MAX_TRACKED = 64
+
+    def __init__(self):
+        self.proven = set()      # hwnds that have answered at least once
+        self._tries = {}         # hwnd -> [attempts, last attempt time]
+
+    def stats(self):
+        return len(self.proven), len(self._tries)
+
+    def nudge(self, hwnd, now=None):
+        if not hwnd or hwnd in self.proven:
+            return False
+        now = time.perf_counter() if now is None else now
+        state = self._tries.get(hwnd)
+        if state is None:
+            if len(self._tries) >= self.MAX_TRACKED:
+                self._tries.clear()
+            state = self._tries[hwnd] = [0, -1e9]
+        if state[0] >= self.ATTEMPTS or now - state[1] < self.RETRY_S:
+            return False
+        state[0] += 1
+        state[1] = now
+        return self._send(hwnd)
+
+    def _send(self, hwnd):
+        """The Win32 half, kept separate so the retry bookkeeping above can
+        be tested without a window to talk to."""
+        try:
+            res = ctypes.c_size_t(0)
+            for objid in (OBJID_CLIENT, OBJID_UIA):
+                _user32.SendMessageTimeoutW(hwnd, WM_GETOBJECT, 0, objid,
+                                            SMTO_ABORTIFHUNG, 60,
+                                            ctypes.byref(res))
+        except Exception:
+            return False
+        return True
+
+    def mark_awake(self, hwnd):
+        if hwnd:
+            if len(self.proven) >= self.MAX_TRACKED:
+                self.proven.clear()
+            self.proven.add(hwnd)
+            self._tries.pop(hwnd, None)
+
+
 class _MsaaProbe:
     """AccessibleObjectFromPoint through raw ctypes COM.
 
     IAccessible derives from IDispatch, so the vtable slots we need sit at
-    fixed offsets: get_accRole is 13 and accLocation is 22. Everything here
-    is defensive — any failure disables the probe rather than risking the
-    capture loop.
+    fixed offsets: get_accName is 10, get_accRole 13 and accLocation 22.
+    Everything here is defensive — any failure disables the probe rather than
+    risking the capture loop.
     """
 
     _VT_I4 = 3
@@ -310,18 +472,22 @@ class _MsaaProbe:
                     ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
                     ("val", ctypes.c_longlong), ("pad", ctypes.c_longlong)]
 
-    def __init__(self):
+    def __init__(self, waker=None):
         self.ok = False
+        self.waker = waker if waker is not None else _Waker()
         try:
             self._ole = ctypes.oledll.oleacc
-            ctypes.oledll.ole32.CoInitializeEx(None, 0)
+            self._oleaut = ctypes.WinDLL("oleaut32")
             self.ok = True
         except Exception:
             self.ok = False
 
-    def at(self, x, y):
+    def at(self, x, y, hwnd=None):
+        """(rect, kind, name) under the point, or None."""
         if not self.ok:
             return None
+        hwnd = _root_at(x, y) if hwnd is None else hwnd
+        self.waker.nudge(hwnd)
         try:
             acc = ctypes.c_void_p()
             child = self._VARIANT()
@@ -331,28 +497,32 @@ class _MsaaProbe:
             if not acc:
                 return None
             try:
-                return self._read(acc, child)
+                got = self._read(acc, child)
             finally:
-                self._release(acc)
+                _com_release(acc)
+            if got:
+                self.waker.mark_awake(hwnd)
+            return got
         except Exception:
             return None
 
-    def _vtbl(self, acc, index, restype, *argtypes):
-        vtbl = ctypes.cast(acc, ctypes.POINTER(ctypes.c_void_p))[0]
-        fn_ptr = ctypes.cast(vtbl, ctypes.POINTER(ctypes.c_void_p))[index]
-        proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
-        return proto(fn_ptr)
-
-    def _release(self, acc):
+    def _name(self, acc, child):
+        bstr = ctypes.c_void_p()
         try:
-            self._vtbl(acc, 2, ctypes.c_ulong)(acc)
+            get_name = _vtbl(acc, 10, ctypes.c_long, self._VARIANT,
+                             ctypes.POINTER(ctypes.c_void_p))
+            if get_name(acc, child, ctypes.byref(bstr)) != 0 or not bstr:
+                return ""
+            text = ctypes.cast(bstr, ctypes.c_wchar_p).value or ""
+            self._oleaut.SysFreeString(bstr)
+            return text
         except Exception:
-            pass
+            return ""
 
     def _read(self, acc, child):
         role_v = self._VARIANT()
-        get_role = self._vtbl(acc, 13, ctypes.c_long,
-                              self._VARIANT, ctypes.POINTER(self._VARIANT))
+        get_role = _vtbl(acc, 13, ctypes.c_long,
+                         self._VARIANT, ctypes.POINTER(self._VARIANT))
         if get_role(acc, child, ctypes.byref(role_v)) != 0:
             return None
         if role_v.vt != self._VT_I4:
@@ -365,33 +535,142 @@ class _MsaaProbe:
         T = ctypes.c_long(0)
         W = ctypes.c_long(0)
         H = ctypes.c_long(0)
-        loc = self._vtbl(acc, 22, ctypes.c_long,
-                         ctypes.POINTER(ctypes.c_long),
-                         ctypes.POINTER(ctypes.c_long),
-                         ctypes.POINTER(ctypes.c_long),
-                         ctypes.POINTER(ctypes.c_long), self._VARIANT)
+        loc = _vtbl(acc, 22, ctypes.c_long,
+                    ctypes.POINTER(ctypes.c_long),
+                    ctypes.POINTER(ctypes.c_long),
+                    ctypes.POINTER(ctypes.c_long),
+                    ctypes.POINTER(ctypes.c_long), self._VARIANT)
         if loc(acc, ctypes.byref(L), ctypes.byref(T), ctypes.byref(W),
                ctypes.byref(H), child) != 0:
             return None
-        if W.value <= 0 or H.value <= 0 or W.value > 600 or H.value > 400:
+        if (W.value <= 0 or H.value <= 0
+                or W.value > MAX_TARGET_W or H.value > MAX_TARGET_H):
             return None           # containers and giant panes aren't targets
-        return (L.value, T.value, L.value + W.value, T.value + H.value), kind
+        return ((L.value, T.value, L.value + W.value, T.value + H.value),
+                kind, self._name(acc, child))
+
+
+class _UiaProbe:
+    """IUIAutomation::ElementFromPoint, again through raw ctypes.
+
+    Kept as the last tier because it costs a shade more than MSAA and finds
+    the same controls most of the time — but not always: on windows where
+    MSAA answered nothing at all, this still returned the buttons. Having a
+    UIA client alive in the process also helps Chromium keep its tree up.
+
+    The COM object is created lazily, on whichever thread first asks, so it
+    is always built *after* that thread has initialised COM.
+    """
+
+    _ELEMENT_FROM_POINT = 7
+    _GET_CONTROL_TYPE = 21
+    _GET_NAME = 23
+    _GET_BOUNDING_RECT = 43
+
+    def __init__(self, waker=None):
+        self.ok = True            # until proven otherwise
+        self.waker = waker if waker is not None else _Waker()
+        self._uia = None
+        self._tried = False
+
+    def _client(self):
+        if self._tried:
+            return self._uia
+        self._tried = True
+        try:
+            self._oleaut = ctypes.WinDLL("oleaut32")
+            clsid = _guid(CLSID_CUIAUTOMATION)
+            iid = _guid(IID_IUIAUTOMATION)
+            ptr = ctypes.c_void_p()
+            ctypes.oledll.ole32.CoCreateInstance(
+                ctypes.byref(clsid), None, 1, ctypes.byref(iid),
+                ctypes.byref(ptr))
+            self._uia = ptr if ptr else None
+        except Exception:
+            self._uia = None
+        self.ok = self._uia is not None
+        return self._uia
+
+    def at(self, x, y, hwnd=None):
+        uia = self._client()
+        if uia is None:
+            return None
+        hwnd = _root_at(x, y) if hwnd is None else hwnd
+        self.waker.nudge(hwnd)
+        try:
+            el = ctypes.c_void_p()
+            hr = _vtbl(uia, self._ELEMENT_FROM_POINT, ctypes.c_long,
+                       wintypes.POINT, ctypes.POINTER(ctypes.c_void_p))(
+                uia, wintypes.POINT(int(x), int(y)), ctypes.byref(el))
+            if hr != 0 or not el:
+                return None
+            try:
+                got = self._read(el)
+            finally:
+                _com_release(el)
+            if got:
+                self.waker.mark_awake(hwnd)
+            return got
+        except Exception:
+            return None
+
+    def _read(self, el):
+        ctype = ctypes.c_long(0)
+        if _vtbl(el, self._GET_CONTROL_TYPE, ctypes.c_long,
+                 ctypes.POINTER(ctypes.c_long))(el, ctypes.byref(ctype)) != 0:
+            return None
+        kind = UIA_KINDS.get(int(ctype.value))
+        if kind is None:
+            return None
+        rc = wintypes.RECT()
+        if _vtbl(el, self._GET_BOUNDING_RECT, ctypes.c_long,
+                 ctypes.POINTER(wintypes.RECT))(el, ctypes.byref(rc)) != 0:
+            return None
+        w, h = rc.right - rc.left, rc.bottom - rc.top
+        if w <= 0 or h <= 0 or w > MAX_TARGET_W or h > MAX_TARGET_H:
+            return None
+        name = ""
+        try:
+            bstr = ctypes.c_void_p()
+            if _vtbl(el, self._GET_NAME, ctypes.c_long,
+                     ctypes.POINTER(ctypes.c_void_p))(
+                    el, ctypes.byref(bstr)) == 0 and bstr:
+                name = ctypes.cast(bstr, ctypes.c_wchar_p).value or ""
+                self._oleaut.SysFreeString(bstr)
+        except Exception:
+            pass
+        return (rc.left, rc.top, rc.right, rc.bottom), kind, name
 
 
 class TargetFinder:
-    """Polls for the target near the cursor on a background thread."""
+    """Polls for the target near the cursor on a background thread.
+
+    Alongside the target it keeps a little diagnostic trail — which tier
+    answered, what the control is called, the last few distinct controls seen
+    and how long a poll costs — because "the magnet isn't grabbing this" is
+    otherwise impossible to tell apart from "the magnet never saw it". Press
+    D in the preview to read it.
+    """
+
+    RECENT = 6            # distinct controls remembered for the D readout
 
     def __init__(self, hz=12.0, reach_px=40.0, use_msaa=True,
-                 include_text_fields=False):
+                 include_text_fields=False, use_uia=True):
         self.period = 1.0 / max(1.0, hz)
         self.reach_px = reach_px
         self.include_text_fields = include_text_fields
-        self._msaa = _MsaaProbe() if use_msaa else None
+        self.waker = _Waker()
+        self._msaa = _MsaaProbe(self.waker) if use_msaa else None
+        self._uia = _UiaProbe(self.waker) if use_uia else None
         self._lock = threading.Lock()
         self._target = None           # (rect, kind, stamp)
         self._stop = threading.Event()
         self._thread = None
         self.errors = 0
+        self.last_tier = None         # which tier answered last
+        self.last_name = ""           # ...and what it called the control
+        self.probe_ms = 0.0           # cost of the last poll
+        self.recent = deque(maxlen=self.RECENT)
 
     def start(self):
         if self._thread is None:
@@ -413,36 +692,50 @@ class TargetFinder:
             return None
         return rect, kind
 
-    def _keep(self, hit):
-        """Text fields are excluded by default: hooking onto them fights you
+    def _keep(self, hit, tier):
+        """Normalise a tier's answer to (rect, kind, name, tier), or None.
+
+        Text fields are excluded by default: hooking onto them fights you
         when you are aiming at text rather than at a control."""
         if hit is None:
             return None
-        if not self.include_text_fields and hit[1] in ("text field",
-                                                       "combo box"):
+        rect, kind = hit[0], hit[1]
+        if not self.include_text_fields and kind in ("text field",
+                                                     "combo box"):
             return None
-        return hit
+        return rect, kind, (hit[2] if len(hit) > 2 else ""), tier
 
     def _find(self, x, y):
+        # Resolve the window once and hand it to both COM tiers: they each
+        # want it for the accessibility nudge, and WindowFromPoint is not
+        # free enough to pay for twice per poll.
+        hwnd = _root_at(x, y)
         try:
-            hit = caption_button_at(x, y, radius=int(self.reach_px) + 8)
-            if hit:
-                return hit
+            got = self._keep(
+                caption_button_at(x, y, radius=int(self.reach_px) + 8),
+                "caption")
+            if got:
+                return got
         except Exception:
             self.errors += 1
         try:
-            hit = self._keep(child_control_at(x, y))
-            if hit:
-                return hit
+            got = self._keep(child_control_at(x, y), "child")
+            if got:
+                return got
         except Exception:
             self.errors += 1
         if self._msaa is not None:
-            hit = self._keep(self._msaa.at(x, y))
-            if hit:
-                return hit
+            got = self._keep(self._msaa.at(x, y, hwnd), "msaa")
+            if got:
+                return got
+        if self._uia is not None:
+            got = self._keep(self._uia.at(x, y, hwnd), "uia")
+            if got:
+                return got
         return None
 
     def _run(self):
+        ensure_com()          # per-thread; see ensure_com's docstring
         while not self._stop.is_set():
             t0 = time.perf_counter()
             try:
@@ -451,9 +744,16 @@ class TargetFinder:
             except Exception:
                 self.errors += 1
                 found = None
+            done = time.perf_counter()
+            self.probe_ms = (done - t0) * 1000.0
             with self._lock:
-                self._target = ((found[0], found[1], time.perf_counter())
-                                if found else None)
+                self._target = (found[0], found[1], done) if found else None
+            if found:
+                rect, kind, name, tier = found
+                self.last_tier, self.last_name = tier, name
+                seen = (kind, name, rect[2] - rect[0], rect[3] - rect[1], tier)
+                if seen not in self.recent:
+                    self.recent.append(seen)
             time.sleep(max(0.0, self.period - (time.perf_counter() - t0)))
 
 

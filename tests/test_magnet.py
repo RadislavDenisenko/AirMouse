@@ -313,6 +313,73 @@ check("everything except movement is delegated unchanged",
       rec5.events == [("wheel", 120), ("rdown",), ("rup",), ("volume", 2),
                       ("minimize",)], f"events={rec5.events}")
 
+# ===================== waking lazy accessibility trees ======================
+# Chromium builds its accessibility tree only once something asks, so the
+# finder sends the WM_GETOBJECT an assistive tool would. The bookkeeping
+# around that nudge is what this covers — the Win32 send is stubbed out.
+from magnet import _Waker
+
+
+class FakeWaker(_Waker):
+    """Counts nudges instead of sending them."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent = []
+
+    def _send(self, hwnd):
+        self.sent.append(hwnd)
+        return True
+
+
+wk = FakeWaker()
+wk.nudge(101, now=0.0)
+check("an unknown window is nudged", wk.sent == [101], f"sent={wk.sent}")
+
+wk.nudge(101, now=0.1)
+wk.nudge(101, now=0.9)
+check("...and not nudged again straight away", wk.sent == [101],
+      f"sent={wk.sent}")
+
+wk.nudge(101, now=1.5)
+check("...but IS retried once the cooldown passes", wk.sent == [101, 101],
+      f"sent={wk.sent}")
+
+# THE BUG THIS FIXES: the old code marked a window done at nudge time, so a
+# nudge that arrived before the tree was ready meant that window was never
+# asked again — tab buttons worked from a test script and never from the app.
+wk_bug = FakeWaker()
+for i in range(12):                        # 12 s of hovering, tree never woke
+    wk_bug.nudge(202, now=i * 1.0)
+check("a window that never answers keeps being retried",
+      len(wk_bug.sent) > 1, f"nudges={len(wk_bug.sent)}")
+check("...but not forever", len(wk_bug.sent) <= _Waker.ATTEMPTS,
+      f"nudges={len(wk_bug.sent)}")
+
+# proof, not optimism: only a control actually read out of the window counts
+wk_ok = FakeWaker()
+wk_ok.nudge(303, now=0.0)
+wk_ok.mark_awake(303)
+for i in range(1, 10):
+    wk_ok.nudge(303, now=i * 2.0)
+check("a window that answered is never nudged again", wk_ok.sent == [303],
+      f"sent={wk_ok.sent}")
+check("waker stats report it as awake", wk_ok.stats() == (1, 0),
+      f"stats={wk_ok.stats()}")
+
+# a long session touches a lot of windows; neither table may grow unbounded
+wk_many = FakeWaker()
+for h in range(500):
+    wk_many.nudge(1000 + h, now=h * 0.001)
+    wk_many.mark_awake(2000 + h)
+check("waker tables stay bounded",
+      len(wk_many.proven) <= _Waker.MAX_TRACKED
+      and len(wk_many._tries) <= _Waker.MAX_TRACKED,
+      f"stats={wk_many.stats()}")
+
+check("a null window handle is never nudged",
+      not FakeWaker().nudge(0, now=0.0))
+
 # ========================= live target hunt (shape only) =====================
 # Runs against this machine: assert it never raises and returns a sane shape.
 try:
@@ -323,6 +390,23 @@ try:
 except Exception as e:
     check("caption probe returns a sane shape and never raises", False,
           f"raised {e!r}")
+
+# the finder normalises every tier to (rect, kind, name, tier)
+from magnet import TargetFinder
+
+tf = TargetFinder(use_msaa=False, use_uia=False)
+check("a 2-tuple tier answer is normalised with an empty name",
+      tf._keep(((0, 0, 10, 10), "button"), "caption")
+      == ((0, 0, 10, 10), "button", "", "caption"))
+check("a 3-tuple tier answer keeps its name",
+      tf._keep(((0, 0, 10, 10), "button", "Close"), "msaa")
+      == ((0, 0, 10, 10), "button", "Close", "msaa"))
+check("text fields are still dropped by default",
+      tf._keep(((0, 0, 10, 10), "text field", "Search"), "uia") is None)
+tf.include_text_fields = True
+check("...and kept when asked for",
+      tf._keep(((0, 0, 10, 10), "text field", "Search"), "uia") is not None)
+check("a miss stays a miss", tf._keep(None, "msaa") is None)
 
 print()
 print("ALL PASS" if not failures else f"FAILED: {failures}")
