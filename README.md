@@ -80,9 +80,16 @@ so a small target like a window's X is easy to stop on. Your hand motion is
 scaled down near a target and steered gently toward its centre — but only in
 proportion to motion you're already making, so a still hand never drifts, and
 sustained movement always pushes straight through. Targets come from window
-caption buttons (`WM_NCHITTEST`), classic Win32 controls, and accessibility
-queries for apps that draw their own UI. It's off during a drag. The preview
-shows `MAGNET` with a grip bar whenever something is caught.
+caption buttons (`WM_NCHITTEST`), classic Win32 controls, and two
+accessibility tiers (MSAA and UI Automation) for apps that draw their own UI
+— which is what catches the close button on an individual Chrome tab. It's
+off during a drag. The preview shows `MAGNET` with a grip bar whenever
+something is caught, and **D** adds what the finder can actually see.
+
+Chromium builds its accessibility tree only when something asks for it, so
+the finder announces itself the way an assistive tool would and **retries**
+until a window genuinely answers. Treating the first ask as sufficient is
+the difference between tab buttons working and silently never appearing.
 
 Navigation is armed by finger *count*, not curl depth: a closed hand has no
 fingers extended, a peace sign has two, pointing has one. That's what lets a
@@ -96,9 +103,23 @@ Hold up **1–4 fingers** on your other hand for ~0.3 s to launch something.
 It's the **count** that matters, not which fingers — two fingers means index
 plus middle, and any combination adding to the same count works.
 
-Both hands must be visible for the launcher to fire; a lone hand is always
-the cursor hand. That rule exists because a single misread hand used to get
-stuck in the wrong role for a whole session.
+The launcher hand works on its own — raise it by itself and it launches
+without ever touching the pointer. That only holds up if the two hands are
+told apart reliably, so identity comes from a **sustained vote** over the
+last dozen frames rather than a single frame's handedness label: one blurred
+frame is confidently wrong often enough to matter. Two properties keep it
+honest — the verdict is recomputed from a rolling window every frame, so a
+wrong call corrects itself in about a fifth of a second instead of latching
+for the session; and until the vote is sure, the hand simply holds no role
+at all, so it can't grab the pointer by accident.
+
+While the launcher hand is up alone, the cursor doesn't disengage — it
+freezes with its anchor intact, the same as when you glance away from the
+screen. Launch something, drop your hand, and carry on pointing without
+holding the engage pose again.
+
+The **Left-handed** toggle in Settings mirrors all of this, so the right
+hand becomes the launcher and never drives the pointer.
 
 ## Settings
 

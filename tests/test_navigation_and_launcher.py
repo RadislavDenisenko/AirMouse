@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(_TESTS_DIR))
 sys.path.insert(0, _TESTS_DIR)
 
 from gestures import GestureController, SwipeDetector, FlickDownDetector, \
-    IDLE, TRACKING, ARMED
+    IDLE, ENGAGING, TRACKING, ARMED
 from hand_roles import RoleAssigner
 from launcher import FingerLauncher
 from mouse_input import NullMouse
@@ -375,6 +375,76 @@ check("no fist swipe while looking away",
       not [e for e in m2.events if e[0] in ("forward", "back", "minimize")],
       f"events={m2.events}")
 
+# ================================ SideVote ===================================
+# MediaPipe's handedness label is INVERTED here (we flip the frame before
+# inference), so the model's "Left" is the user's RIGHT hand. user_side() is
+# the one place that knows this; every test below goes through it.
+from hand_roles import SideVote, user_side
+
+check("label inversion: model 'Left' = the user's right hand",
+      user_side("Left") == "right" and user_side("Right") == "left")
+check("a missing label picks no side", user_side("") is None)
+
+
+def vote_frames(sv, label, score, n, t0=0.0, dt=DT):
+    """Feed n frames of one label; return (verdict, time)."""
+    t, side = t0, sv.side()
+    for _ in range(n):
+        t += dt
+        side = sv.update(label, score, t)
+    return side, t
+
+
+sv = SideVote()
+check("one confident frame is not enough to decide",
+      vote_frames(sv, "Left", 0.95, 1)[0] is None)
+check("a sustained majority decides", vote_frames(sv, "Left", 0.95, 6)[0] == "right")
+
+# a label that keeps flipping is exactly the case that must NOT decide
+sv_flip = SideVote()
+t, side = 0.0, None
+for i in range(30):
+    t += DT
+    side = sv_flip.update("Left" if i % 2 else "Right", 0.95, t)
+check("a flickering label never decides", side is None, f"side={side}")
+
+# low-confidence frames abstain rather than voting badly
+sv_low = SideVote()
+check("low-confidence frames never decide",
+      vote_frames(sv_low, "Left", 0.3, 20)[0] is None)
+
+# one bad frame in an otherwise clean stream is outvoted, not obeyed
+sv_blur = SideVote()
+sv_blur.update("Right", 0.95, DT)                 # a single misread frame
+check("one misread frame cannot decide alone", sv_blur.side() is None)
+check("the majority still wins after a misread frame",
+      vote_frames(sv_blur, "Left", 0.95, 6, t0=DT)[0] == "right")
+
+# ...and the verdict is never latched: sustained disagreement flips it back
+side, t = vote_frames(SideVote(), "Left", 0.95, 8)
+sv_flipback = SideVote()
+vote_frames(sv_flipback, "Left", 0.95, 8)
+check("a wrong verdict is corrected by sustained disagreement",
+      vote_frames(sv_flipback, "Right", 0.95, 20, t0=1.0, dt=DT)[0] == "left")
+
+# leaving the frame forgets everything — no verdict survives an absence
+sv_gap = SideVote()
+vote_frames(sv_gap, "Left", 0.95, 8)
+sv_gap.gap(5.0)                                   # hand gone for seconds
+check("a real absence clears the verdict", sv_gap.side() is None)
+
+# ...but a blink does not (detection drops frames constantly)
+sv_blink = SideVote()
+_, t = vote_frames(sv_blink, "Left", 0.95, 8)
+sv_blink.gap(t + 0.1)
+check("a brief dropout keeps the verdict", sv_blink.side() == "right")
+
+# escape hatch: if handedness data never arrives at all, nothing could tell
+# the hands apart, so a lone hand falls back to being the dominant one
+sv_blind = SideVote(blind_frames=24)
+check("no handedness data at all falls back to the dominant hand",
+      vote_frames(sv_blind, "", 0.0, 24)[0] == "right")
+
 # ============================= RoleAssigner ==================================
 ra = RoleAssigner(dominant="right")
 right_h = {"pts": synthetic_hand(500, 240), "label": "Right", "score": 0.95}
@@ -383,47 +453,71 @@ roles = ra.assign([left_h, right_h], W)
 check("two hands: right side = cursor", roles["cursor"] is right_h["pts"]
       and roles["off"] is left_h["pts"])
 
-# v3.3 policy: a LONE hand is ALWAYS the cursor hand — no label guess, no
-# position guess, no first-frame latch. The old code seeded the side from
-# the first (blurriest) frame and latched it, which is how a raised right
-# hand got stuck as "left" and stopped driving the cursor.
-ra2 = RoleAssigner()
-lone = {"pts": synthetic_hand(400, 240), "label": "Right", "score": 0.95}
-roles = ra2.assign([lone], W)
-check("lone hand is the cursor regardless of its label",
-      roles["cursor"] is lone["pts"] and roles["off"] is None)
 
-# ...even with a wrong/confident 'this is the left hand' label on the very
-# first frame it is seen (the reported field bug)
-ra2b = RoleAssigner()
-lone_bad = {"pts": synthetic_hand(200, 240), "label": "Left", "score": 0.95}
-roles = ra2b.assign([lone_bad], W)
-check("wrong first-frame label cannot demote a lone hand",
-      roles["cursor"] is lone_bad["pts"])
+def lone_frames(ra, label, score, n, px=320, t0=0.0, dt=DT):
+    """Feed n frames of one lone hand; return (every role dict, end time)."""
+    t, out = t0, []
+    for _ in range(n):
+        t += dt
+        out.append(ra.assign([{"pts": synthetic_hand(px, 240), "label": label,
+                               "score": score}], W, t))
+    return out, t
 
-# ...and regardless of which half of the frame it is in, labeled or not
-ra3 = RoleAssigner()
-for pts_x, label, score in ((150, "", 0.0), (520, "", 0.0),
-                            (320, "Right", 0.3), (100, "Left", 0.99)):
-    roles = ra3.assign([{"pts": synthetic_hand(pts_x, 240), "label": label,
-                         "score": score}], W)
-    if roles["cursor"] is None:
-        break
-check("lone hand is cursor at any position / label / confidence",
-      roles["cursor"] is not None)
 
-# no permanent latch: off for one frame is impossible for a lone hand, and
-# the wrong side cannot survive a dropout either
-ra3b = RoleAssigner()
-ra3b.assign([{"pts": synthetic_hand(150, 240), "label": "Right", "score": 0.9}], W)
-ra3b.assign([], W)                                    # hand lost entirely
-roles = ra3b.assign([{"pts": synthetic_hand(150, 240), "label": "Right",
-                      "score": 0.9}], W)
-check("re-acquired lone hand is cursor again (no stale latch)",
-      roles["cursor"] is not None)
+# v3.5 policy: the off hand NEVER drives the cursor, so it works on its own.
+# A lone LEFT hand (the model calls it "Right") is the launcher hand and is
+# not the cursor on any frame — not even the first one, before the vote has
+# settled, because an unidentified hand holds no role at all.
+ra_l = RoleAssigner(dominant="right")
+seq, _ = lone_frames(ra_l, "Right", 0.95, 30)
+check("a lone left hand never drives the cursor, on any frame",
+      all(r["cursor"] is None for r in seq))
+check("a lone left hand does become the launcher hand",
+      seq[-1]["off"] is not None)
+check("...and holds no role at all until the vote settles",
+      seq[0]["off"] is None and seq[0]["cursor"] is None)
 
-# launcher cooldown: the off hand must be continuously visible for
-# launcher_cooldown_s before off_ready() lets the launcher fire
+# The dominant hand alone still gets the cursor, and quickly (~0.2 s) — the
+# engage hold is 1.2 s, so the wait is invisible in real use.
+ra_r = RoleAssigner(dominant="right")
+seq, _ = lone_frames(ra_r, "Left", 0.95, 12)
+settled = next((i for i, r in enumerate(seq) if r["cursor"] is not None), None)
+check("a lone right hand becomes the cursor", seq[-1]["cursor"] is not None
+      and seq[-1]["off"] is None)
+check("...within about a fifth of a second",
+      settled is not None and settled * DT <= 0.35, f"after {settled} frames")
+
+# THE ORIGINAL FIELD BUG: the first frame a hand is seen is the blurriest,
+# and it used to be latched. Here frame 1 confidently says "this is the left
+# hand" and it is wrong — the vote must outvote it, not obey it.
+ra_bug = RoleAssigner()
+ra_bug.assign([{"pts": synthetic_hand(200, 240), "label": "Right",
+                "score": 0.99}], W, DT)
+seq, _ = lone_frames(ra_bug, "Left", 0.95, 12, px=200, t0=DT)
+check("a confident wrong first frame cannot capture the role",
+      seq[-1]["cursor"] is not None, "right hand still stuck as 'left'")
+
+# no stale latch across an absence: the same hand position, a new identity
+ra_gap = RoleAssigner()
+lone_frames(ra_gap, "Right", 0.95, 12, px=300)       # left hand, identified
+ra_gap.assign([], W, 5.0)                            # both hands down
+seq, _ = lone_frames(ra_gap, "Left", 0.95, 12, px=300, t0=5.0)
+check("identity is not carried across an absence",
+      seq[-1]["cursor"] is not None)
+
+# a two-hand stretch clears the vote, so the surviving hand cannot inherit
+# the other one's identity when you drop one
+ra_two = RoleAssigner()
+lone_frames(ra_two, "Left", 0.95, 12, px=500)        # right hand alone: cursor
+roles = ra_two.assign([left_h, right_h], W, 1.0)     # left hand joins
+roles = ra_two.assign([{"pts": synthetic_hand(140, 240), "label": "Right",
+                        "score": 0.95}], W, 1.0 + DT)   # right hand drops
+check("the surviving hand does not inherit the other's identity",
+      roles["cursor"] is None)
+
+# launcher cooldown: the off hand must be present for launcher_cooldown_s
+# before off_ready() lets the launcher fire — including when it is the ONLY
+# hand up, which is the whole point of the new policy
 ra_cd = RoleAssigner(launcher_cooldown_s=1.0)
 right_cd = {"pts": synthetic_hand(500, 240), "label": "Left", "score": 0.9}
 left_cd = {"pts": synthetic_hand(140, 240), "label": "Right", "score": 0.9}
@@ -435,6 +529,13 @@ check("off hand stable past cooldown -> launcher allowed",
 ra_cd.assign([right_cd], W, now=11.3)                 # left hand drops out
 ra_cd.assign([left_cd, right_cd], W, now=11.4)        # ...and returns
 check("off hand reappearing restarts the cooldown", not ra_cd.off_ready(11.5))
+
+ra_solo = RoleAssigner(launcher_cooldown_s=1.0)
+seq, t = lone_frames(ra_solo, "Right", 0.95, 12, t0=20.0)   # left hand alone
+check("a lone off hand still serves its launcher cooldown",
+      not ra_solo.off_ready(t))
+check("...and is allowed once the cooldown has run",
+      ra_solo.off_ready(t + 1.0))
 
 # overlap freeze: labels flip when hands come together; identity must hold
 ra4 = RoleAssigner()
@@ -452,6 +553,105 @@ ra5 = RoleAssigner(dominant="left")
 roles = ra5.assign([left_h, right_h], W)
 check("dominant='left' -> left hand drives cursor",
       roles["cursor"] is left_h["pts"])
+
+# ...and mirrors the lone-hand rule: now the RIGHT hand is launcher-only
+ra6 = RoleAssigner(dominant="left")
+seq, _ = lone_frames(ra6, "Left", 0.95, 30)          # the user's right hand
+check("dominant='left': a lone right hand never drives the cursor",
+      all(r["cursor"] is None for r in seq) and seq[-1]["off"] is not None)
+
+ra7 = RoleAssigner(dominant="left")
+seq, _ = lone_frames(ra7, "Right", 0.95, 12)         # the user's left hand
+check("dominant='left': a lone left hand is the cursor",
+      seq[-1]["cursor"] is not None)
+
+# ===================== suspend: launcher hand up on its own ==================
+# When the only hand in frame is the launcher hand (or one the vote hasn't
+# identified yet) there is no cursor hand, but that is NOT a lost hand: the
+# pointer freezes and stays engaged, so reaching for a launcher slot doesn't
+# cost a fresh 1.2 s engage when you come back to pointing.
+def engage(ctrl, px=320, py=240, t0=0.0, n=12):
+    t = t0
+    for _ in range(n):
+        t += DT
+        ctrl.update(synthetic_hand(px, py), FRAME, t)
+    return t
+
+
+def suspended(ctrl, n, t0):
+    t, info = t0, None
+    for _ in range(n):
+        t += DT
+        info = ctrl.update(None, FRAME, t, suspend=True)
+    return info, t
+
+
+m_sus = NullMouse()
+c_sus = GestureController(m_sus, engage_hold_s=0.25, dead_zone_px=0.0,
+                          filter_min_cutoff=None, lose_grace_s=0.25)
+t = engage(c_sus)
+assert c_sus.state == TRACKING, c_sus.state
+anchor = c_sus.anchor
+m_sus.events.clear()
+info, t = suspended(c_sus, 20, t)                # 0.66 s, well past lose_grace
+check("launcher hand up keeps the cursor engaged", info["state"] == TRACKING,
+      f"state={info['state']}")
+check("...with the anchor untouched", c_sus.anchor == anchor)
+check("...and the pointer frozen",
+      not [e for e in m_sus.events if e[0] == "move"],
+      f"events={m_sus.events[:3]}")
+check("...and reported as suspended", info["suspended"] is True)
+
+for i in range(1, 5):                            # cursor hand comes back
+    t += DT
+    info = c_sus.update(synthetic_hand(320 + 15 * i, 240), FRAME, t)
+check("pointing resumes with no re-engage", info["state"] == TRACKING
+      and [e for e in m_sus.events if e[0] == "move"])
+
+# the contrast: a genuinely lost hand (nothing in frame) still disengages
+m_lost = NullMouse()
+c_lost = GestureController(m_lost, engage_hold_s=0.25, dead_zone_px=0.0,
+                           filter_min_cutoff=None, lose_grace_s=0.25)
+t = engage(c_lost)
+for _ in range(20):
+    t += DT
+    info = c_lost.update(None, FRAME, t)         # suspend defaults to False
+check("both hands down still disengages", info["state"] == IDLE,
+      f"state={info['state']}")
+
+# a held drag survives the launcher hand going up
+m_drag = NullMouse()
+c_drag = GestureController(m_drag, engage_hold_s=0.25, dead_zone_px=0.0,
+                           filter_min_cutoff=None)
+t = engage(c_drag, px=300)
+for _ in range(4):                               # pinch: left button down
+    t += DT
+    c_drag.update(hand(300, 240, 20), FRAME, t)
+assert ("down",) in m_drag.events, m_drag.events
+m_drag.events.clear()
+info, t = suspended(c_drag, 20, t)
+check("a held drag is not dropped while suspended",
+      ("up",) not in m_drag.events and info["state"] != IDLE,
+      f"events={m_drag.events} state={info['state']}")
+
+# an engage in progress is PAUSED, not cancelled — a hand crossing the frame
+# for a moment must not cost you the hold you were part-way through
+m_eng = NullMouse()
+c_eng = GestureController(m_eng, engage_hold_s=0.3, dead_zone_px=0.0,
+                          filter_min_cutoff=None)
+t = 0.0
+for _ in range(5):                               # 0.17 s of the 0.3 s hold
+    t += DT
+    c_eng.update(synthetic_hand(320, 240), FRAME, t)
+assert c_eng.state == ENGAGING, c_eng.state
+info, t = suspended(c_eng, 15, t)                # 0.5 s suspended
+check("a suspended engage neither completes nor resets",
+      info["state"] == ENGAGING, f"state={info['state']}")
+for _ in range(5):                               # the remaining 0.17 s
+    t += DT
+    info = c_eng.update(synthetic_hand(320, 240), FRAME, t)
+check("the engage completes on the pose time it actually had",
+      info["state"] == TRACKING, f"state={info['state']}")
 
 # ==================== FingerLauncher (count-based slots) =====================
 lc = FingerLauncher(hold_s=0.3, cooldown_s=1.0)

@@ -406,11 +406,17 @@ def draw_magnet_debug(frame, mouse, finder):
     rows.append((f"enabled {'yes' if on else 'no'}", bool(on)))
     if finder is not None:
         rows.append((f"finder errors {finder.errors}", finder.errors == 0))
+        rows.append((f"poll {finder.probe_ms:.1f}ms", finder.probe_ms < 30.0))
     if got:
         rect, kind = got
         cur = get_cursor_pos()
         from magnet import dist_to_rect
-        rows.append((f"target {kind}", True))
+        label = kind
+        if finder is not None and finder.last_name:
+            label += f" '{finder.last_name[:18]}'"
+        if finder is not None and finder.last_tier:
+            label += f" via {finder.last_tier}"
+        rows.append((f"target {label}", True))
         rows.append((f"rect {rect[0]},{rect[1]} {rect[2] - rect[0]}x"
                      f"{rect[3] - rect[1]}", True))
         rows.append((f"distance {dist_to_rect(cur[0], cur[1], rect):.0f}px", True))
@@ -423,9 +429,25 @@ def draw_magnet_debug(frame, mouse, finder):
                      scale < 1.0))
     else:
         rows.append(("no target near the cursor", False))
+    # Lazily-built accessibility trees (Chrome's tab strip) only appear once
+    # they have been nudged awake, so show how that is going — and list what
+    # the finder has actually seen, which is the difference between "the
+    # magnet won't grab this" and "the magnet never found it".
+    if finder is not None:
+        awake, pending = finder.waker.stats()
+        rows.append((f"a11y woken {awake}, retrying {pending}", awake > 0))
+        rows.append(("SEEN RECENTLY", None))
+        if finder.recent:
+            for kind, name, rw, rh, tier in list(finder.recent)[-6:]:
+                text = f"{kind} {rw}x{rh} {tier}"
+                if name:
+                    text += f" '{name[:16]}'"
+                rows.append((text, True))
+        else:
+            rows.append(("nothing yet", False))
     y = 124
     for text, ok in rows:
-        cv2.putText(frame, text, (w - 260, y), F, 0.45 if ok is None else 0.42,
+        cv2.putText(frame, text, (w - 300, y), F, 0.45 if ok is None else 0.42,
                     HDR if ok is None else (GO if ok else NO), 1, cv2.LINE_AA)
         y += 16
 
@@ -612,6 +634,7 @@ def main():
     magnet_finder = TargetFinder(
         hz=mag_cfg.get("poll_hz", 12.0), reach_px=mp_["reach_px"],
         use_msaa=mag_cfg.get("use_msaa", True),
+        use_uia=mag_cfg.get("use_uia", True),
         include_text_fields=mp_["include_text_fields"]).start()
     real_mouse = MagnetMouse(
         real_mouse, magnet_finder, enabled=mp_["enabled"],
@@ -625,10 +648,10 @@ def main():
     controller = make_controller(real_mouse, cfg)
     paused = False
 
-    # Two-hand routing: cursor (dominant) hand -> controller; off hand ->
-    # launcher. A lone hand is ALWAYS the cursor hand (v3.3): the launcher
-    # needs both hands visible, so a raised right hand can never be misread
-    # as "left" and stop driving the pointer.
+    # Hand routing: cursor (dominant) hand -> controller; off hand ->
+    # launcher. The off hand NEVER drives the pointer, so it works on its own,
+    # and a lone hand is identified by a sustained handedness vote rather than
+    # by one frame's label. Until that vote is sure the hand does nothing.
     assigner = RoleAssigner(
         dominant=cfg.get("dominant_hand", "right"),
         launcher_cooldown_s=cfg.get("roles", {}).get("launcher_cooldown_s", 1.0))
@@ -709,15 +732,22 @@ def main():
         cursor_pts, off_pts = roles["cursor"], roles["off"]
         for hd in hand_list:
             is_cursor = hd["pts"] is cursor_pts
-            draw_landmarks(frame, hd["pts"],
-                           color=(0, 200, 0) if is_cursor else (255, 160, 0))
-            tag = "R" if hd["pts"] is roles["right"] else "L"
+            # '?' = seen but not yet identified; it controls nothing until the
+            # handedness vote settles, which takes about a fifth of a second.
+            tag = ("R" if hd["pts"] is roles["right"]
+                   else "L" if hd["pts"] is roles["left"] else "?")
+            colour = ((0, 200, 0) if is_cursor
+                      else (255, 160, 0) if tag != "?" else (140, 140, 140))
+            draw_landmarks(frame, hd["pts"], color=colour)
             wx, wy = hd["pts"][WRIST]
             cv2.putText(frame, tag, (wx + 10, wy + 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                        (0, 220, 0) if is_cursor else (255, 160, 0), 2, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2, cv2.LINE_AA)
 
-        info = controller.update(cursor_pts, (w, h), now, attending=attending)
+        # A hand is up but it isn't the cursor hand: freeze the pointer and
+        # keep it engaged rather than letting it time out, so reaching for a
+        # launcher slot doesn't cost a fresh engage when you come back.
+        info = controller.update(cursor_pts, (w, h), now, attending=attending,
+                                 suspend=cursor_pts is None and bool(hand_list))
 
         # Left-hand finger launcher — only while attending, and only once the
         # off hand has been stably present past the role cooldown, so a hand

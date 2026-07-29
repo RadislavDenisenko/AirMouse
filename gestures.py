@@ -610,6 +610,7 @@ class GestureController:
         self._lost_t0 = None        # when tracking conditions first failed
         self._attn_lost_t0 = None   # when the user first looked away
         self._attending = True      # gate: is the user looking at the screen?
+        self._suspended = False     # a hand is up, but not the cursor hand
         self._residual = [0.0, 0.0]  # sub-pixel move remainder
         self._pose_hold_t0 = None   # when the pending scroll pose-change began
         self._scroll_origin = None  # joystick neutral point, set at scroll entry
@@ -639,12 +640,16 @@ class GestureController:
 
     # -- state machine -----------------------------------------------------
 
-    def update(self, pts, frame_size, now, attending=True):
+    def update(self, pts, frame_size, now, attending=True, suspend=False):
         """Advance one frame. pts = 21 (x,y) camera-pixel points for the cursor
         hand, or None. `attending` is the attention gate: when False the user
         isn't looking at the screen, so no cursor motion, clicks, navigation, or
-        engaging happen. Returns an overlay info dict."""
+        engaging happen. `suspend` says a hand IS in frame but it isn't the
+        cursor hand (the launcher hand is up, or it hasn't been identified
+        yet): hold everything exactly as it is rather than treating it as a
+        lost hand. Returns an overlay info dict."""
         self._attending = attending
+        self._suspended = suspend
         frame_h = frame_size[1]
         if pts:
             raw = palm_center(pts)
@@ -730,7 +735,8 @@ class GestureController:
                 "swipe_progress": self._swipe.progress,
                 "last_swipe": self.last_swipe,
                 "attending": self._attending,
-                "suspended": self.state == TRACKING and not self._attending}
+                "suspended": self.state == TRACKING
+                             and (not self._attending or self._suspended)}
 
     def _handle_swipe(self, pts, now):
         """Fist-armed horizontal swipe = browser Back/Forward. Never fires
@@ -785,6 +791,14 @@ class GestureController:
             self._engage_t0 = now
 
     def _handle_engaging(self, pts, frame_h, now):
+        # A suspended frame pauses the hold instead of cancelling it: the pose
+        # is presumably still there, we just have no cursor hand this frame.
+        # It can never COMPLETE while suspended — there'd be nothing to anchor
+        # to — because this returns before the timer is checked.
+        if self._suspended and self._attending:
+            if self._prev_now is not None:
+                self._engage_t0 += max(0.0, now - self._prev_now)
+            return
         if not self._attending or not pts or not self._is_engage_pose(pts, frame_h):
             self._to_idle()
             return
@@ -826,6 +840,17 @@ class GestureController:
                 self._to_idle()
             return
         self._attn_lost_t0 = None
+
+        # The hand in frame simply isn't the cursor hand — the launcher hand
+        # is up on its own, or the vote hasn't told them apart yet. Freeze the
+        # pointer and keep the anchor and any held button latched: raising the
+        # launcher hand must not cost a fresh engage. Unlike a real tracking
+        # loss this never times out; dropping every hand is what disengages.
+        if self._suspended:
+            self._prev_palm = None
+            self._lost_t0 = None
+            self._wheel_acc = self._hwheel_acc = 0.0
+            return
 
         valid = pts is not None and self._stay_ok(pts, frame_h)
         if not valid:
