@@ -25,7 +25,7 @@ from config_defaults import (APP_TITLE, APP_VERSION,  # noqa: F401
 from hand_tracker import (HandTracker, draw_landmarks, to_pixel_points,
                           WRIST, THUMB_TIP, INDEX_TIP, MIDDLE_TIP)
 from gestures import (GestureController, IDLE, ENGAGING, TRACKING, PINCHED,
-                      RCLICK, ARMED, SCROLL, VOLUME, POINT)
+                      RCLICK, ARMED, SCROLL, VOLUME, BRAKING, POINT)
 from hand_roles import RoleAssigner
 from launcher import FingerLauncher, SLOT_LABELS
 from magnet import MagnetMouse, TargetFinder, resolve_params
@@ -40,7 +40,8 @@ WINDOW = APP_TITLE
 STATE_COLORS = {IDLE: (90, 90, 255), ENGAGING: (0, 200, 255),
                 TRACKING: (0, 220, 0), PINCHED: (0, 170, 255),
                 RCLICK: (255, 0, 255), ARMED: (0, 90, 255),
-                SCROLL: (255, 255, 0), VOLUME: (0, 210, 210)}
+                SCROLL: (255, 255, 0), VOLUME: (0, 210, 210),
+                BRAKING: (150, 220, 120)}
 
 def load_config(path: str = CONFIG_PATH) -> dict:
     """Load config.json, filling any missing keys with defaults.
@@ -96,6 +97,11 @@ def make_controller(mouse, cfg: dict) -> GestureController:
         fist_down_ratio=cfg["fist"]["down_ratio"],
         fist_up_ratio=cfg["fist"]["up_ratio"],
         fist_debounce_frames=cfg["fist"]["debounce_frames"],
+        brake_enabled=cfg.get("brake", {}).get("enabled", True),
+        brake_onset=cfg.get("brake", {}).get("onset", 0.15),
+        brake_full=cfg.get("brake", {}).get("full", 0.75),
+        brake_min_scale=cfg.get("brake", {}).get("min_scale", 0.25),
+        brake_smoothing=cfg.get("brake", {}).get("smoothing", 0.35),
         scroll_natural=cfg["scroll"].get("natural", False),
         scroll_dead_zone_hs=cfg["scroll"].get("dead_zone_hs", 0.3),
         scroll_gain_notches_s=cfg["scroll"].get("gain_notches_s", 30.0),
@@ -325,6 +331,20 @@ def draw_overlay(frame, info, fps, low_light=False, paused=False, attn=None):
                     (max(4, p[0] - 170), p[1] - 32),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 90, 255), 1, cv2.LINE_AA)
 
+    # Precision brake: show how much slowdown the squeeze is buying, right
+    # at the hand. It is proportional, so a number alone would be useless —
+    # the bar is what tells you whether to squeeze harder.
+    brake = info.get("brake", 0.0)
+    if brake > 0.02 and palm is not None and not paused:
+        p = (int(palm[0]), int(palm[1]))
+        bx, by = max(4, p[0] - 40), p[1] + 40
+        cv2.rectangle(frame, (bx, by), (bx + 80, by + 7), (70, 70, 70), -1)
+        cv2.rectangle(frame, (bx, by), (bx + int(80 * brake), by + 7),
+                      (150, 220, 120), -1)
+        cv2.putText(frame, f"BRAKE  speed x{info.get('brake_scale', 1.0):.2f}",
+                    (bx - 4, by - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (150, 220, 120), 1, cv2.LINE_AA)
+
     # Engage progress ring around the palm while holding the open palm
     if state == ENGAGING and palm is not None:
         p = (int(palm[0]), int(palm[1]))
@@ -335,7 +355,8 @@ def draw_overlay(frame, info, fps, low_light=False, paused=False, attn=None):
     # Self-scaling anchor circle + line to current palm while tracking. The
     # ring is the "edge" — sensitivity ramps up toward it and the circle
     # trails the hand once you cross it.
-    if state in (TRACKING, PINCHED, RCLICK, ARMED, SCROLL) and anchor is not None:
+    if state in (TRACKING, PINCHED, RCLICK, ARMED, SCROLL,
+                 BRAKING) and anchor is not None:
         a = (int(anchor[0]), int(anchor[1]))
         radius = max(8, int(info.get("radius", 40)))
         cv2.circle(frame, a, radius, (0, 220, 0), 2, cv2.LINE_AA)
@@ -466,7 +487,20 @@ def draw_gesture_debug(frame, info, cfg):
     F = cv2.FONT_HERSHEY_SIMPLEX
     GO, NO, HDR = (120, 240, 120), (150, 150, 150), (0, 220, 255)
 
+    br = cfg.get("brake", {})
+    bm = info.get("brake_m") or {}
     rows = [
+        # The brake is proportional, so its two thresholds are the ones most
+        # worth reading off a real hand: onset is where slowing starts, full
+        # is where it bottoms out.
+        ("BRAKE  (squeeze M+R+P)", None),
+        (f"pose {'held' if bm.get('posed') else 'no'} "
+         f"(index out, middle in)", bool(bm.get("posed"))),
+        (f"curl {bm.get('curl', 0.0):+.2f}  onset {br.get('onset', 0.15)}"
+         f"  full {br.get('full', 0.75)}",
+         bm.get("curl", 0.0) >= br.get("onset", 0.15)),
+        (f"amount {bm.get('amount', 0.0) * 100:.0f}%  ->  speed x"
+         f"{bm.get('scale', 1.0):.2f}", bm.get("amount", 0.0) > 0.02),
         ("GRAB  (D hides this)", None),
         (f"curl {curl:.2f} < {fi.get('down_ratio', 1.30)}" if curl is not None
          else "curl --",
@@ -765,9 +799,11 @@ def main():
         if frame_i % 30 == 0:
             launcher_cmds = read_launcher_commands()
             launcher_labels = read_launcher_labels()
-            # magnet settings apply live — tuning with a restart in between
-            # made it impossible to tell whether a change did anything
-            fresh = resolve_params(load_config().get("magnet", {}))
+            # Magnet and brake settings apply live — tuning either with a
+            # restart in between made it impossible to tell whether a change
+            # did anything, which cost a whole session once already.
+            live_cfg = load_config()
+            fresh = resolve_params(live_cfg.get("magnet", {}))
             magnet_mouse.apply_params(
                 enabled=fresh["enabled"], strength=fresh["strength"],
                 reach_px=fresh["reach_px"], pull=fresh["pull"],
@@ -776,7 +812,7 @@ def main():
                 refractory_s=fresh["refractory_s"])
             magnet_finder.reach_px = fresh["reach_px"]
             magnet_finder.include_text_fields = fresh["include_text_fields"]
-            launcher_labels = read_launcher_labels()
+            controller.apply_brake_params(live_cfg.get("brake"))
 
         if cursor_pts and info.get("mode") == POINT:
             # pinch lines: thumb-index (left click), thumb-middle (right)

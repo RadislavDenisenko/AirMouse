@@ -30,6 +30,15 @@ DEFAULT_CONFIG = {
               "pinch_freeze_s": 0.15, "release_freeze_s": 0.10},
     "right_pinch": {"down_ratio": 0.28, "up_ratio": 0.38, "debounce_frames": 2},
     "fist": {"down_ratio": 1.30, "up_ratio": 1.55, "debounce_frames": 2},
+    # Precision brake: squeeze the middle, ring and pinky to slow the cursor
+    # for small targets. Proportional, not a switch — `onset` is the curl
+    # depth (in hand-size units) where slowing begins and `full` where it
+    # bottoms out at `min_scale` of normal speed. The gap between them is
+    # deliberate headroom: fingers rest half-curled while pointing, and that
+    # must never brake on its own. `smoothing` eases the amount so a steady
+    # squeeze gives a steady speed instead of shimmering.
+    "brake": {"enabled": True, "onset": 0.15, "full": 0.75,
+              "min_scale": 0.25, "smoothing": 0.35},
     "scroll": {"natural": False, "dead_zone_hs": 0.3,
                "gain_notches_s": 30.0, "max_notches_s": 120.0,
                "curve": 1.5,
@@ -56,7 +65,11 @@ DEFAULT_CONFIG = {
     # accessibility tiers that find controls drawing themselves (most modern
     # UI, including the close button on each Chrome tab) on top of the cheap
     # Win32 ones — escape hatches, in case some app misbehaves under them.
-    "magnet": {"enabled": True, "custom_tuning": False,
+    # Starts OFF: the precision brake covers the same "stop on a small
+    # target" problem by hand, and magnetism is the more intrusive of the
+    # two, so it is opted into rather than out of. The setting persists
+    # normally once changed.
+    "magnet": {"enabled": False, "custom_tuning": False,
                "strength": 80.0, "reach_px": 90.0, "pull": 0.45,
                "capture_radius_px": 40.0, "escape_px": 40.0,
                "refractory_s": 0.3, "include_text_fields": False,

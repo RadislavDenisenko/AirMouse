@@ -69,6 +69,58 @@ def peace_hand(px, py):
     return pts
 
 
+def brake_hand(px, py, frac=1.0):
+    """Precision-brake pose: index and thumb stay out, middle+ring+pinky
+    curled `frac` of the way in. frac=0 is an open hand, frac=1 a full
+    squeeze — so a test can sweep the curl continuously. Lives here for the
+    same reason peace_hand does: this module is import-safe."""
+    open_pts = synthetic_hand(px, py)
+    pts = list(open_pts)
+    for b in (9, 13, 17):                  # middle, ring, pinky bases
+        x = pts[b][0]
+        for k, shut in ((1, (x, py - 70)), (2, (x, py - 40)), (3, (x, py + 10))):
+            ox, oy = open_pts[b + k]
+            pts[b + k] = (ox + (shut[0] - ox) * frac,
+                          oy + (shut[1] - oy) * frac)
+    return pts
+
+
+def brake_pinch(px, py, pinch_dist=20.0):
+    """Brake pose with the thumb pinched to the index tip — squeezing to slow
+    down and clicking at the same time, which is the point of the gesture."""
+    import math
+    pts = brake_hand(px, py)
+    pts[8] = (pts[8][0], py - 90)               # index curls to meet the thumb
+    tx, ty = pts[8]
+    rest = (px - 60, py - 40)
+    d = math.hypot(rest[0] - tx, rest[1] - ty)
+    ux, uy = (rest[0] - tx) / d, (rest[1] - ty) / d
+    pts[4] = (tx + ux * pinch_dist, ty + uy * pinch_dist)
+    return pts
+
+
+def clench(px, py, f, index_lag=0.0):
+    """An open hand `f` of the way into a fist, with the index trailing the
+    other fingers by `index_lag`.
+
+    Real hands do not close all four fingers at once — the pinky leads and
+    the index finishes last. That roll matters because a hand mid-clench
+    briefly reads as "index out, middle in", which is also the precision
+    brake's shape."""
+    open_pts = synthetic_hand(px, py)
+    shut_pts = synthetic_hand(px, py, open_palm=False)
+    pts = list(open_pts)
+    for name, b in (("index", 5), ("middle", 9), ("ring", 13), ("pinky", 17)):
+        ff = f
+        if name == "index":
+            ff = max(0.0, min(1.0, (f - index_lag) / max(1e-6, 1.0 - index_lag)))
+        for k in (1, 2, 3):
+            ox, oy = open_pts[b + k]
+            sx, sy = shut_pts[b + k]
+            pts[b + k] = (ox + (sx - ox) * ff, oy + (sy - oy) * ff)
+    return pts
+
+
 def raw_controller(mouse, sensitivity=5.0):
     """State-machine-only controller: dead zone off, smoothing disabled,
     short engage hold so tests don't need 1.2s of frames."""

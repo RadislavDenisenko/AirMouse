@@ -67,6 +67,7 @@ Teams, a browser tab) and start it again.
 | Thumb + index, held | **Drag** |
 | Thumb + middle, tap | **Right click** |
 | Thumb + ring, held + move up/down | **Volume** — 1:1, so moving back down undoes it exactly |
+| Curl middle + ring + pinky | **Precision brake** — squeeze harder, move slower |
 | Closed hand (a relaxed grab is enough) | **Arms navigation** — the cursor holds still |
 | Grab + swipe left / right | **Forward / Back** |
 | Grab + push down, let it land | **Minimise** the active window |
@@ -75,7 +76,23 @@ Teams, a browser tab) and start it again.
 | Move back toward the zero | The zero **jumps to your hand**, so reversing is instant |
 | Lower your hand | Disengage — the cursor stays where it is |
 
-**Cursor magnetism.** Clickable things get sticky as the pointer nears them,
+**The precision brake.** Small targets are the hard part of any pointing
+device. Curling your middle, ring and pinky slows the cursor in proportion
+to how far you squeeze — a light curl trims a little, a full squeeze crawls
+— so you can bear down on a close button without switching modes or losing
+your place. Your index and thumb stay out of it, which means you can still
+pinch to click, and the brake deliberately survives that pinch rather than
+letting go at the exact moment you need it.
+
+The pose is read by shape before depth: the index has to be clear of the
+curl and the middle folded into it. That is what keeps it distinct from a
+fist, which curls the same three fingers, and from a peace sign, which curls
+two of them and means scroll instead. A hand resting half-curled while you
+point never brakes on its own.
+
+**Cursor magnetism.** Off by default — the brake covers the same problem by
+hand, and magnetism is the more intrusive of the two. Clickable things get
+sticky as the pointer nears them,
 so a small target like a window's X is easy to stop on. Your hand motion is
 scaled down near a target and steered gently toward its centre — but only in
 proportion to motion you're already making, so a still hand never drifts, and
@@ -175,7 +192,7 @@ turns "why won't this fire?" into a readable answer.
 tests\run_all_tests.bat
 ```
 
-Eleven suites, all headless — they drive the gesture state machine with
+Twelve suites, all headless — they drive the gesture state machine with
 synthetic hand landmarks, so the whole pipeline is testable without a camera
 or a mouse. They cover the motion model, every gesture detector, the
 attention gate, config merging and atomic writes, the launcher, and the pure

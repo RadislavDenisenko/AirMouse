@@ -29,7 +29,7 @@ from paths import CONFIG_PATH, USER_DIR  # noqa: F401 (CONFIG_PATH re-exported)
 APP_DIR = USER_DIR
 
 # Keys the running tracker picks up without a restart.
-LIVE_PREFIXES = ("launcher.", "magnet.")
+LIVE_PREFIXES = ("launcher.", "magnet.", "brake.")
 
 
 # ------------------------------------------------------------ dotted paths ---
@@ -263,6 +263,34 @@ SECTIONS = (
              "key": "fist.down_ratio", "lo": 1.0, "hi": 1.6, "fmt": "{:.2f}",
              "caption": "*Higher = a lazier grab counts.* Only a closed hand "
                         "can arm, so this can be generous."},
+            {"kind": "note", "label": "The precision brake",
+             "caption": "Curl your *middle, ring and pinky* while pointing "
+                        "and the cursor slows down — *squeeze harder to go "
+                        "slower*. Your index and thumb stay free, so you can "
+                        "still click without letting go."},
+            {"kind": "toggle", "label": "Precision brake",
+             "key": "brake.enabled",
+             "caption": "*Squeeze three fingers to slow the cursor* for small "
+                        "targets."},
+            {"kind": "slider", "label": "Slowest speed",
+             "key": "brake.min_scale", "lo": 0.1, "hi": 0.9, "fmt": "{:.2f}",
+             "caption": "Speed at a *full squeeze*, as a share of normal. "
+                        "*Lower = finer control.*"},
+            {"kind": "slider", "label": "Brake takes hold at",
+             "key": "brake.onset", "lo": -0.2, "hi": 0.6, "fmt": "{:+.2f}",
+             "advanced": True,
+             "caption": "*How much curl before it starts.* Raise it if "
+                        "the cursor slows while you are just pointing."},
+            {"kind": "slider", "label": "Full squeeze at",
+             "key": "brake.full", "lo": 0.3, "hi": 1.2, "fmt": "{:.2f}",
+             "advanced": True,
+             "caption": "Curl depth that reaches the *slowest speed*. Lower "
+                        "it if you can't squeeze far enough to bottom out."},
+            {"kind": "slider", "label": "Brake smoothing",
+             "key": "brake.smoothing", "lo": 0.1, "hi": 1.0, "fmt": "{:.2f}",
+             "advanced": True,
+             "caption": "*Lower = smoother but laggier.* Smoothing stops the "
+                        "speed shimmering while you hold a squeeze."},
             {"kind": "slider", "label": "Swipe distance",
              "key": "swipe.hand_widths", "lo": 0.6, "hi": 3.5,
              "fmt": "{:.1f}",

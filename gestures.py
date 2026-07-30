@@ -44,6 +44,7 @@ RCLICK = "R-CLICK"     # right button held by thumb+middle pinch
 ARMED = "ARMED"        # clenched fist: swipe navigation armed, cursor frozen
 SCROLL = "SCROLL"      # peace-sign scroll mode
 VOLUME = "VOLUME"      # thumb+ring pinch held: system volume
+BRAKING = "BRAKING"    # middle+ring+pinky squeezed: precision slowdown
 
 POINT = "POINT"        # TRACKING sub-mode: normal cursor control
 
@@ -95,6 +96,144 @@ def curl_ratio(pts):
     w = pts[WRIST]
     tips = (pts[8], pts[12], pts[16], pts[20])
     return sum(_dist(t, w) for t in tips) / (4.0 * hand_size(pts))
+
+
+BRAKE_FINGERS = ("middle", "ring", "pinky")
+
+
+def brake_curl(pts):
+    """How deeply the middle, ring and pinky are curled, in hand-size units.
+
+    Mean of (PIP-to-wrist minus tip-to-wrist) across those three fingers:
+    negative when they are straight, rising through zero as they fold in. It
+    measures curl DEPTH continuously rather than classifying it, which is
+    what lets the brake be proportional instead of a switch.
+
+    The index and thumb are deliberately excluded. That is the whole trick
+    behind squeezing and clicking at the same time: pinching curls the index,
+    and if the index counted, every click would release the brake at the
+    exact moment you needed it.
+    """
+    w = pts[WRIST]
+    hs = hand_size(pts)
+    total = 0.0
+    for name in BRAKE_FINGERS:
+        tip, pip = _FINGERS[name]
+        total += (_dist(pts[pip], w) - _dist(pts[tip], w)) / hs
+    return total / len(BRAKE_FINGERS)
+
+
+def is_brake_pose(pts):
+    """Precision-brake shape: index clear of the curl, middle folded into it.
+
+    Both tests earn their place. The index one separates a brake from a
+    fist, which curls everything. The middle one separates it from a peace
+    sign — that pose folds ring and pinky away, so it reads as a deep curl
+    on the three-finger average even though it means scroll. Gating on shape
+    rather than on curl depth is what lets the onset threshold stay low
+    enough to feel responsive without collecting other poses on the way.
+    """
+    ext = fingers_extended(pts)
+    return ext["index"] and not ext["middle"]
+
+
+class BrakeDetector:
+    """Squeeze the middle, ring and pinky to slow the cursor down.
+
+    A precision brake for small targets — the manual alternative to
+    magnetism. It is CONTINUOUS (curl further, go slower) but only past an
+    onset, because fingers rest half-curled during ordinary pointing and that
+    must never brake on its own. Below `onset` nothing happens at all; from
+    `onset` to `full` the slowdown ramps in to `min_scale`.
+
+    Two details that matter as much as the mapping:
+
+      * **Smoothing.** Curl depth is noisy frame to frame, and feeding it
+        straight through would make pointer speed shimmer while you hold a
+        steady squeeze. The amount is eased toward its target instead.
+      * **Debounced entry.** The pose has to be HELD before it counts. A
+        hand closing into a fist passes through the brake shape on the way
+        — the index finishes last, so for a frame or two the index is out
+        while the middle is already folded. Engaging on that transient
+        latched the brake, which gated fist arming off and killed swipe
+        navigation until the hand was opened again. Every other pose here
+        debounces for the same reason; this one is no different.
+      * **Bounded stickiness.** A pinch curls the index, so an established
+        brake must survive its own click. That licence is deliberately
+        limited: indefinite while a button is actually held, and only
+        `stick_frames` long otherwise, so a slow clench that does manage to
+        establish the brake still lets go of it by itself.
+
+    A still hand is unaffected either way: this scales motion, and scaling
+    zero is zero.
+    """
+
+    def __init__(self, enabled=True, onset=0.15, full=0.75, min_scale=0.25,
+                 smoothing=0.35, enter_frames=4, stick_frames=8):
+        self.enabled = enabled
+        self.onset = onset
+        self.full = full
+        self.min_scale = min_scale
+        self.smoothing = smoothing
+        self.enter_frames = enter_frames
+        self.stick_frames = stick_frames
+        self.reset()
+
+    def reset(self):
+        self.amount = 0.0        # 0..1, how far into the brake we are
+        self.raw = 0.0           # last curl reading, for the D readout
+        self.posed = False       # is the hand shaped for braking right now?
+        self._hold = 0           # consecutive frames holding the pose
+        self._slip = 0           # consecutive frames out of it while engaged
+
+    @property
+    def scale(self):
+        """Multiplier to apply to cursor motion: 1.0 = untouched.
+
+        The floor is clamped into (0, 1]: a hand-edited config with a
+        negative or above-one min_scale would otherwise invert or amplify
+        cursor motion rather than slowing it.
+        """
+        floor = min(1.0, max(0.05, self.min_scale))
+        return 1.0 - self.amount * (1.0 - floor)
+
+    @property
+    def engaged(self):
+        return self.amount > 0.02
+
+    def update(self, pts, pose_ok=True, hold_ok=False):
+        """One frame. `pose_ok` says the hand is shaped for braking right
+        now; `hold_ok` says a button is being held, which licenses the brake
+        to stay on while the pinch keeps the pose from reading. Returns the
+        brake amount."""
+        if not self.enabled or pts is None:
+            target = 0.0
+            self.posed = False
+            self._hold = self._slip = 0
+        else:
+            self.raw = brake_curl(pts)
+            if pose_ok:
+                self._hold += 1
+                self._slip = 0
+            else:
+                self._hold = 0
+                self._slip += 1
+            ready = self._hold >= self.enter_frames
+            sticky = self.engaged and (hold_ok
+                                       or self._slip <= self.stick_frames)
+            self.posed = ready or sticky
+            span = max(1e-6, self.full - self.onset)
+            target = ((self.raw - self.onset) / span) if self.posed else 0.0
+            target = min(1.0, max(0.0, target))
+        self.amount += self.smoothing * (target - self.amount)
+        if self.amount < 1e-3:
+            self.amount = 0.0
+        return self.amount
+
+    @property
+    def metrics(self):
+        return {"curl": self.raw, "amount": self.amount,
+                "scale": self.scale, "posed": self.posed}
 
 
 def is_scroll_pose(pts):
@@ -513,6 +652,9 @@ class GestureController:
                  volume_steps_per_hs: float = 8.0,
                  fist_down_ratio: float = 1.30, fist_up_ratio: float = 1.55,
                  fist_debounce_frames: int = 2,
+                 brake_enabled: bool = True, brake_onset: float = 0.15,
+                 brake_full: float = 0.75, brake_min_scale: float = 0.25,
+                 brake_smoothing: float = 0.35,
                  scroll_natural: bool = False,
                  scroll_dead_zone_hs: float = 0.3,
                  scroll_gain_notches_s: float = 30.0,
@@ -581,6 +723,8 @@ class GestureController:
                                      right_debounce_frames, MIDDLE_TIP)
         self._fist = FistDetector(fist_down_ratio, fist_up_ratio,
                                   fist_debounce_frames)
+        self._brake = BrakeDetector(brake_enabled, brake_onset, brake_full,
+                                    brake_min_scale, brake_smoothing)
         self.volume_enabled = volume_enabled
         self.volume_steps_per_hs = volume_steps_per_hs
         self._vpinch = PinchDetector(volume_down_ratio, volume_up_ratio,
@@ -621,6 +765,22 @@ class GestureController:
         self._fist_lost_t0 = None   # when the cursor hand vanished (fist gap)
         self._wheel_acc = 0.0
         self._hwheel_acc = 0.0
+
+    def apply_brake_params(self, params=None, **kw):
+        """Retune the precision brake without a restart.
+
+        The brake's thresholds only mean anything against a real hand, so
+        tuning them has to be a live loop: squeeze, read the D readout,
+        nudge the slider, squeeze again. This is fed straight from
+        config.json every 30 frames, so it takes whatever is in there:
+        anything that isn't a mapping is ignored, and unknown or None
+        values are skipped rather than crashing the capture loop."""
+        values = dict(params) if isinstance(params, dict) else {}
+        values.update(kw)
+        for name in ("enabled", "onset", "full", "min_scale", "smoothing",
+                     "enter_frames", "stick_frames"):
+            if values.get(name) is not None:
+                setattr(self._brake, name, values[name])
 
     # -- gesture predicates ------------------------------------------------
 
@@ -665,13 +825,23 @@ class GestureController:
         # stable through the motion blur of a fast stroke. A brief tracking
         # dropout (common exactly when a fist self-occludes) keeps the armed
         # state; only a sustained loss disarms.
+        # The precision brake shares its shape with a fist (both curl the
+        # middle, ring and pinky), so it is measured FIRST and the fist can
+        # only arm when the brake is not engaged. Entering the brake needs
+        # the index clear of the curl, which a clench never satisfies — so a
+        # fist still arms normally, while a pinch made from an already-held
+        # brake reads as a click rather than as a fist.
         if pts:
-            self._fist.update(pts)
+            self._brake.update(pts, pose_ok=is_brake_pose(pts),
+                               hold_ok=self._left_owner == "pinch")
+            self._fist.update(pts, gate_on=not self._brake.engaged)
             self._fist_lost_t0 = None
-        elif self._fist_lost_t0 is None:
-            self._fist_lost_t0 = now
-        elif now - self._fist_lost_t0 > 0.3:
-            self._fist.reset()      # hand truly gone -> disarm cleanly
+        else:
+            self._brake.update(None)
+            if self._fist_lost_t0 is None:
+                self._fist_lost_t0 = now
+            elif now - self._fist_lost_t0 > 0.3:
+                self._fist.reset()  # hand truly gone -> disarm cleanly
 
         # Fist-armed swipe navigation + down-flick minimize run on the cursor
         # hand in any state (no need to engage), but only while looking at
@@ -705,6 +875,8 @@ class GestureController:
                 display = RCLICK
             elif self._fist.is_down:
                 display = ARMED
+            elif self._brake.engaged:
+                display = BRAKING
             else:
                 display = TRACKING
         else:
@@ -725,6 +897,9 @@ class GestureController:
                 "scroll_dead_px": self.scroll_dead_zone_hs
                                   * (self._scroll_hs or self._hand_scale or 0.0),
                 "volume_down": self._vol_down,
+                "brake": self._brake.amount,
+                "brake_scale": self._brake.scale,
+                "brake_m": self._brake.metrics,
                 "fist_armed": self._fist.is_down,
                 "fist_curl": self._fist.ratio,
                 "fist_ext": self._fist.n_ext,
@@ -911,13 +1086,21 @@ class GestureController:
         # Pinch clicks. The thumb "belongs" to whichever fingertip it is
         # closest to (index = left, middle = right); ring must still be
         # extended so a forming/armed fist can't fake a pinch.
+        # While the brake is held the ring finger is curled BY DEFINITION, so
+        # the "ring must be extended" guard would block the very clicks the
+        # brake exists to make easier. Braking replaces that guard: the fist
+        # can't arm while braking, so there is no forming fist to fake a
+        # pinch. Right-click and volume stay blocked either way — both need a
+        # finger the squeeze has already folded away, so reading them here
+        # would be guesswork.
         lp = pinch_ratio(pts, INDEX_TIP)
         rp = pinch_ratio(pts, MIDDLE_TIP)
         ext = fingers_extended(pts)
+        braking = self._brake.engaged
         l_gate = (self._left_owner is None and not self._fist.is_down
-                  and ext["ring"] and lp <= rp)
+                  and (ext["ring"] or braking) and lp <= rp)
         r_gate = (not self._right_down and not self._fist.is_down
-                  and ext["ring"] and rp < lp)
+                  and ext["ring"] and not braking and rp < lp)
         left_edge = self._lpinch.update(pts, gate_on=l_gate)
         right_edge = self._rpinch.update(pts, gate_on=r_gate)
 
@@ -928,7 +1111,7 @@ class GestureController:
         vp = pinch_ratio(pts, RING_TIP)
         v_gate = (self.volume_enabled and not self._vol_down
                   and not self._fist.is_down and self._left_owner is None
-                  and not self._right_down
+                  and not self._right_down and not braking
                   and vp < lp and vp < rp and ext["index"])
         vol_edge = self._vpinch.update(pts, gate_on=v_gate)
         if vol_edge == "down" and not self._vol_down:
@@ -993,6 +1176,10 @@ class GestureController:
         # edge_multiplier x faster at the rim of the self-scaling circle.
         edge_frac = min(1.0, dist / self.radius) if self.radius > 0 else 0.0
         eff = self.sensitivity * (1.0 + (self.edge_multiplier - 1.0) * edge_frac)
+        # Squeezing the last three fingers scales this down — proportionally,
+        # so it trims as much as you ask for. It multiplies the motion rather
+        # than offsetting it, so a still hand still emits exactly nothing.
+        eff *= self._brake.scale
 
         dx = dy = 0.0
         if self._prev_palm is not None:
