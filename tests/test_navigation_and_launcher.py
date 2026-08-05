@@ -763,27 +763,35 @@ check("hand_widths independently rejects the same push",
 check("min_speed_hw_s independently rejects the same push",
       run_flick(FlickDownDetector(min_speed_hw_s=9.0), push_short) is None)
 
-# no landing = no fire: a push that keeps moving (arm dropping) times out
+# The pull now fires on the stroke itself, without waiting for the hand to
+# stop. "Push it down and hold still" was the single hardest gesture in the
+# app to perform on purpose; what keeps it from firing by accident is the
+# armed fist, not the landing.
 fd_nl = FlickDownDetector()
 t, res = 0.0, None
-for i in range(20):                      # keeps falling, never settles
+for i in range(20):                      # a pull that keeps travelling
     t += DT
     r = fd_nl.update((320, 100 + 30 * i), HW, True, t)
     res = r or res
-check("push that never lands does not fire", res is None)
+check("a committed pull fires without waiting to land", res == "minimize")
 
-# ...and a push that falls OUT OF FRAME (hand lost) cancels cleanly
-fd_of = FlickDownDetector()
+# ...and it fires exactly once, not on every frame of a long pull
+fd_once = FlickDownDetector()
+t, fired = 0.0, 0
+for i in range(20):
+    t += DT
+    if fd_once.update((320, 100 + 30 * i), HW, True, t) == "minimize":
+        fired += 1
+check("a long pull still only minimises once", fired == 1, f"fired={fired}")
+
+# the old behaviour is still available for anyone who wants it back
+fd_land = FlickDownDetector(require_landing=True)
 t, res = 0.0, None
-for i in range(5):
+for i in range(20):
     t += DT
-    r = fd_of.update((320, 100 + 45 * i), HW, True, t)
+    r = fd_land.update((320, 100 + 30 * i), HW, True, t)
     res = r or res
-for _ in range(4):                       # hand gone (dropped to the lap)
-    t += DT
-    r = fd_of.update(None, 0.0, False, t)
-    res = r or res
-check("push that leaves the frame does not fire", res is None)
+check("require_landing=True still waits for the hand to settle", res is None)
 
 # casually lowering the hand (slow) never fires — even armed, even landing
 fd2 = FlickDownDetector()

@@ -421,6 +421,10 @@ SECTIONS = (
             {"kind": "toggle", "label": "Left-handed",
              "key": "_dominant_left", "derived": True,
              "caption": "*Swaps the roles* — left hand drives the cursor."},
+            {"kind": "toggle", "label": "Show the walkthrough",
+             "key": "_show_tutorial", "derived": True,
+             "caption": "*Replays the gesture walkthrough* the next time "
+                        "AirMouse starts."},
         ),
     },
 )
@@ -452,6 +456,10 @@ def read_derived(cfg, key):
             get_in(cfg, "attention.pitch_thresh_deg", 25.0))
     if key == "_dominant_left":
         return get_in(cfg, "dominant_hand", "right") == "left"
+    if key == "_show_tutorial":
+        # Stored the other way round: the config records that the
+        # walkthrough is FINISHED, the switch offers to show it again.
+        return not get_in(cfg, "tutorial_done", False)
     return None
 
 
@@ -463,6 +471,8 @@ def write_derived(key, value):
                 "attention.pitch_thresh_deg": round(pitch, 1)}
     if key == "_dominant_left":
         return {"dominant_hand": "left" if value else "right"}
+    if key == "_show_tutorial":
+        return {"tutorial_done": not value}
     return {}
 
 

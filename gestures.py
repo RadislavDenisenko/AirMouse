@@ -521,11 +521,14 @@ class FlickDownDetector:
     SwipeDetector (measuring only from the oldest sample made the speed
     floor a hidden ~2.3-hand-width distance bar that overrode hand_widths).
 
-    LANDING CHECK: detecting the push does not fire immediately — the hand
-    must decelerate and settle (below settle_speed_hw_s) while still
-    tracked and still armed, within settle_timeout_s. "Push it down and it
-    lands." A dropped arm keeps falling out of frame and never settles, so
-    resting a still-clenched fist in your lap doesn't minimize a window.
+    LANDING CHECK (`require_landing`, now OFF by default): the push used to
+    wait for the hand to decelerate and settle before firing. That reliably
+    stopped a dropped arm minimising a window — but it also made this the
+    hardest gesture in the app to do deliberately, because "push and then
+    hold still" is not what the movement feels like. What stops an accidental
+    fire now is the pose: the fist must already be armed across the stroke,
+    and an arm dropped in frustration is an open hand. Set it back to True to
+    restore the old behaviour.
 
     Axis: fires on dy > |dx| (vertically dominant), complementing the
     swipe's |dx| >= |dy| — every direction belongs to exactly one gesture."""
@@ -535,7 +538,9 @@ class FlickDownDetector:
                  refractory_s: float = 1.0, armed_frac: float = 0.6,
                  gap_tolerance_s: float = 0.15,
                  settle_speed_hw_s: float = 1.5,
-                 settle_timeout_s: float = 0.4):
+                 settle_timeout_s: float = 0.4,
+                 require_landing: bool = False):
+        self.require_landing = require_landing
         self.hand_widths = hand_widths
         self.window_s = window_s
         self.min_speed_hw_s = min_speed_hw_s
@@ -626,9 +631,19 @@ class FlickDownDetector:
                     and speed_hw_s >= self.min_speed_hw_s
                     and armed_share >= self.armed_frac
                     and self._hist[i][4]):
-                self._pending_t0 = now     # push seen; now wait for landing
                 self.active = True
-                break
+                if self.require_landing:
+                    self._pending_t0 = now      # wait for the hand to settle
+                    break
+                # Fire the moment the pull is unambiguous. Waiting for the
+                # hand to decelerate and stop made this the hardest gesture
+                # in the app to perform on purpose; a closed fist plus a
+                # committed downward pull is already specific enough that an
+                # open-handed arm drop cannot reach it.
+                self._hist = []
+                self._refractory_until = now + self.refractory_s
+                self.metrics = best
+                return "minimize"
         self.metrics = best
         return None
 
@@ -679,6 +694,7 @@ class GestureController:
                  flick_down_min_speed_hw_s: float = 4.5,
                  flick_down_refractory_s: float = 1.0,
                  flick_down_armed_frac: float = 0.6,
+                 flick_down_require_landing: bool = False,
                  flick_down_settle_speed_hw_s: float = 1.5,
                  flick_down_settle_timeout_s: float = 0.4):
         self.mouse = mouse
@@ -744,7 +760,8 @@ class GestureController:
             flick_down_min_speed_hw_s, flick_down_refractory_s,
             flick_down_armed_frac,
             settle_speed_hw_s=flick_down_settle_speed_hw_s,
-            settle_timeout_s=flick_down_settle_timeout_s)
+            settle_timeout_s=flick_down_settle_timeout_s,
+            require_landing=flick_down_require_landing)
         self._left_owner = None     # None | 'pinch' (left button holder)
         self._right_down = False
         self._freeze_until = 0.0    # cursor frozen while now < this
@@ -785,12 +802,24 @@ class GestureController:
     # -- gesture predicates ------------------------------------------------
 
     def _is_engage_pose(self, pts, frame_h):
-        """ENGAGE: flat spread 'high-five' — all four fingers extended, hand
-        upright, and a wide thumb-to-pinky span so a loose/half hand won't arm."""
+        """ENGAGE: just raise an open hand.
+
+        This used to demand a splayed "high five" — every finger extended AND
+        a wide thumb-to-pinky span — held for over a second. Both were there
+        to stop a hand wandering through frame taking the cursor, and both
+        made the app feel like it was ignoring you. The open-fingers test
+        alone already rules out the poses that mean something else (a fist
+        arms navigation, a peace sign scrolls), so the span requirement was
+        only ever costing users their first impression.
+
+        `engage_spread_ratio` still applies if raised above 0 in config, for
+        anyone who wants the stricter pose back.
+        """
         ext = fingers_extended(pts)
         upright = pts[MIDDLE_MCP][1] < pts[WRIST][1] - 0.05 * frame_h
         return (upright and all(ext.values())
-                and spread_ratio(pts) >= self.engage_spread_ratio)
+                and (self.engage_spread_ratio <= 0
+                     or spread_ratio(pts) >= self.engage_spread_ratio))
 
     def _stay_ok(self, pts, frame_h):
         """Stay tracking while the hand is roughly upright. Fingers stay free

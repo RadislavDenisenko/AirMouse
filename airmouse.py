@@ -20,6 +20,7 @@ os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
 
 import cv2  # noqa: E402 (import order is deliberate; see above)
 
+import applog  # noqa: E402
 from config_defaults import (APP_TITLE, APP_VERSION,  # noqa: F401
                              DEFAULT_CONFIG)
 from hand_tracker import (HandTracker, draw_landmarks, to_pixel_points,
@@ -129,6 +130,7 @@ def make_controller(mouse, cfg: dict) -> GestureController:
         flick_down_min_speed_hw_s=fl.get("min_speed_hw_s", 4.5),
         flick_down_refractory_s=fl.get("refractory_s", 1.0),
         flick_down_armed_frac=fl.get("armed_frac", 0.6),
+        flick_down_require_landing=fl.get("require_landing", False),
         flick_down_settle_speed_hw_s=fl.get("settle_speed_hw_s", 1.5),
         flick_down_settle_timeout_s=fl.get("settle_timeout_s", 0.4),
     )
@@ -622,6 +624,10 @@ def main():
                     help="screenshot path for S key / selftest")
     ap.add_argument("--settings", action="store_true",
                     help="open the settings window instead of the tracker")
+    ap.add_argument("--tutorial", action="store_true",
+                    help="replay the first-run walkthrough, then exit")
+    ap.add_argument("--no-tutorial", action="store_true",
+                    help="skip the walkthrough even on a first run")
     args = ap.parse_args()
 
     if args.settings:
@@ -629,11 +635,31 @@ def main():
         return settings_app.main() or 0
 
     cfg = load_config()
+
+    if args.tutorial:
+        import settings_store
+        import tutorial
+        if tutorial.run(cfg):
+            settings_store.save_updates({"tutorial_done": True})
+        return 0
     cam_index = args.camera if args.camera is not None else cfg["camera_index"]
+
+    # First run: teach the gestures before anything else. The walkthrough
+    # holds the webcam while it is open — only one program can — so it has to
+    # finish and release it before the tracker opens the camera below.
+    if not cfg.get("tutorial_done", False) and not args.no_tutorial:
+        try:
+            import settings_store
+            import tutorial
+            if tutorial.run(cfg):
+                settings_store.save_updates({"tutorial_done": True})
+        except Exception as exc:                  # never block startup on it
+            print(f"WARNING: walkthrough failed to open ({exc})")
+        cfg = load_config()
 
     cap = open_camera(cam_index)
     if not cap.isOpened():
-        print(f"ERROR: cannot open camera index {cam_index}")
+        applog.fatal("camera", f"ERROR: cannot open camera index {cam_index}")
         return 1
 
     low_light = False
@@ -649,8 +675,9 @@ def main():
             cap = open_camera(cam_index)
             cam_fps, low_light = ensure_framerate(cap)
             if cam_fps <= 0:
-                print("ERROR: camera is not delivering frames. Is another "
-                      "app (Zoom/Teams/browser) using the webcam?")
+                applog.fatal("camera", "ERROR: camera is not delivering "
+                             "frames. Is another app (Zoom/Teams/browser) "
+                             "using the webcam?")
                 cap.release()
                 return 1
         print(f"camera delivering {cam_fps:.1f} fps"
@@ -905,4 +932,17 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # There is no console any more, so nothing may fail silently: everything
+    # printed lands in the log, and anything that stops the app from starting
+    # raises a dialog that says so in words rather than leaving the user with
+    # a window that simply never appeared.
+    applog.start(APP_VERSION)
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception as exc:                      # noqa: BLE001 - last resort
+        applog.fatal(exc=exc)
+        sys.exit(1)

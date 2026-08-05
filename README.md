@@ -27,8 +27,8 @@ Three ideas shaped the design:
 
 - **Position, not velocity.** Engaging locks an anchor circle sized to your
   hand on camera, so control feels identical whether you're close or far.
-  Sensitivity ramps from the centre to the rim: precise in the middle, fast
-  at the edge.
+  Speed is even across the circle by default; an optional edge boost ramps it
+  up toward the rim if you'd rather cross a wide screen with less arm.
 - **Nothing fires by accident.** Navigation must be *armed* with a closed
   hand first; an open hand moving quickly is only ever cursor motion. A
   minimise gesture has to decelerate and land before it commits, so dropping
@@ -52,16 +52,41 @@ Run it with **run_airmouse.bat**, or:
 venv\Scripts\python.exe airmouse.py
 ```
 
-A small always-on-top preview shows what the tracker sees. If it reports the
-camera is busy, close whatever else is using the webcam (Discord, Zoom,
-Teams, a browser tab) and start it again.
+A small always-on-top preview shows what the tracker sees. There's no console
+window; if something stops it starting — a busy webcam, a missing model — it
+says so in a dialog and writes the detail to `airmouse.log` next to
+`config.json`.
+
+## First run
+
+The first launch opens a walkthrough instead of going straight to the
+tracker, because nothing on screen would otherwise suggest that touching your
+thumb to your ring finger sets the volume. It asks for one gesture at a time
+and waits until you actually do it, showing a drawn hand for the pose you're
+aiming for beside your own hand from the camera — the diagram says what to
+do, and the camera says what the app currently thinks you're doing, which is
+the part that matters when a gesture won't take.
+
+Detection there runs the real gesture engine, not a simplified stand-in, so a
+step that passes is proof the same gesture will fire in the app.
+
+Each step also shows what the gesture *does*, on a small pretend desktop: a
+bubble marks where your fingers meet as a pinch closes, a volume bar tracks
+your hand, pages slide when you swipe, and a window drops into the taskbar
+when you push down. None of it touches the real system — the walkthrough
+drives a null mouse, so those are the actions the app *would* have taken,
+drawn instead of performed. That is what makes it safe to practise
+minimising things.
+
+Skip it any time; **Show the walkthrough** under Camera in Settings brings it
+back, and `--tutorial` replays it directly.
 
 ## Gestures — cursor hand
 
 | Gesture | Action |
 | --- | --- |
 | Flat spread palm ("high five"), hold ~1.2 s | **Engage** — an anchor circle sized to your hand locks in |
-| Move hand | **Move cursor** — precise near the centre, faster toward the rim |
+| Move hand | **Move cursor** — speed is even across the circle by default |
 | Push past the rim | The circle **follows your hand**, so you can cross the whole screen |
 | Thumb + index, tap | **Left click** |
 | Thumb + index, held | **Drag** |
@@ -192,11 +217,12 @@ turns "why won't this fire?" into a readable answer.
 tests\run_all_tests.bat
 ```
 
-Twelve suites, all headless — they drive the gesture state machine with
+Thirteen suites, all headless — they drive the gesture state machine with
 synthetic hand landmarks, so the whole pipeline is testable without a camera
 or a mouse. They cover the motion model, every gesture detector, the
-attention gate, config merging and atomic writes, the launcher, and the pure
-logic behind the settings UI.
+attention gate, config merging and atomic writes, the launcher, target
+discovery for magnetism, and the pure logic behind the settings UI and the
+walkthrough.
 
 ## Project layout
 
@@ -214,6 +240,8 @@ logic behind the settings UI.
 | `settings_app.py` | Settings app |
 | `settings_store.py` | Config data layer and the control manifest |
 | `settings_ui.py` | Animated Canvas widget kit |
+| `tutorial.py` | First-run walkthrough — animated hand diagrams and live detection |
+| `applog.py` | Logging and error dialogs, now that there's no console |
 | `config_defaults.py` | Single source of truth for defaults |
 | `DESIGN.md` | Design notes for the settings UI |
 

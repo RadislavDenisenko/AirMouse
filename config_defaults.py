@@ -16,14 +16,32 @@ APP_TITLE = f"{APP_NAME} {APP_VERSION} {APP_STAGE}"
 
 DEFAULT_CONFIG = {
     "camera_index": 0,
+    # The first-run walkthrough. Set back to False (or press Replay in
+    # Settings) to see it again — it owns the webcam while it runs, so the
+    # tracker only starts once it has closed.
+    "tutorial_done": False,
     "dominant_hand": "right",
-    "sensitivity": 9.0,
-    "edge_multiplier": 3.0,
+    # Pointer speed. The old 9.0 meant crossing a wide screen took a full
+    # sweep of the arm, which read as the app being sluggish rather than as
+    # a setting being low. The precision brake covers the fine end now, so
+    # the default can sit where it feels immediate.
+    "sensitivity": 14.0,
+    # Cursor speed is uniform across the circle by default. The edge boost
+    # (up to this many times faster at the rim) is a real help on a wide
+    # screen, but it makes the pointer feel like it accelerates away from
+    # you, and the precision brake now covers the "be careful here" case far
+    # more directly. 1.0 = off; raise it if you want the reach back.
+    "edge_multiplier": 1.0,
     "radius_scale": 2.2,
     "min_radius_px": 40.0,
     "dead_zone_px": 5.0,
-    "engage_hold_s": 1.2,
-    "engage_spread_ratio": 1.7,
+    # Raise an open hand and it connects. The hold used to be 1.2s with a
+    # splayed "high five" required, which made the very first thing anyone
+    # did feel like being ignored. What is left is just long enough that a
+    # hand crossing the frame on its way somewhere else cannot take the
+    # cursor. Set engage_spread_ratio above 0 to demand the wide pose again.
+    "engage_hold_s": 0.2,
+    "engage_spread_ratio": 0.0,
     "lose_grace_s": 0.25,
     "smoothing": {"min_cutoff": 0.5, "beta": 0.007},
     "pinch": {"down_ratio": 0.28, "up_ratio": 0.38, "debounce_frames": 2,
@@ -39,19 +57,32 @@ DEFAULT_CONFIG = {
     # squeeze gives a steady speed instead of shimmering.
     "brake": {"enabled": True, "onset": 0.15, "full": 0.75,
               "min_scale": 0.25, "smoothing": 0.35},
-    "scroll": {"natural": False, "dead_zone_hs": 0.3,
-               "gain_notches_s": 30.0, "max_notches_s": 120.0,
+    # Scrolling is rate-based, so `gain` is how fast a small offset already
+    # moves the page. It was tuned low enough that people leaned further and
+    # further out of the dead zone waiting for something to happen.
+    "scroll": {"natural": False, "dead_zone_hs": 0.25,
+               "gain_notches_s": 48.0, "max_notches_s": 170.0,
                "curve": 1.5,
                "enter_score": 0.10, "exit_score": 0.0,
                "enter_hold_s": 0.06, "exit_hold_s": 0.20,
                "restore_s": 0.5, "restore_dist_hs": 0.5,
                "recenter_speed_hs": 1.0, "recenter_hold_s": 0.1},
-    "swipe": {"enabled": True, "hand_widths": 1.8, "window_s": 0.7,
-              "min_speed_hw_s": 5.0, "refractory_s": 0.8,
+    # Swipe distance is in hand-widths, so it holds at any camera distance.
+    # 1.8 was most of an arm's sweep — long enough that a normal flick
+    # registered as nothing and the gesture felt broken rather than picky.
+    # `invert` swaps back/forward if you prefer the opposite convention;
+    # as shipped, moving your hand right goes BACK, matching a trackpad.
+    "swipe": {"enabled": True, "hand_widths": 0.9, "window_s": 0.7,
+              "min_speed_hw_s": 3.5, "refractory_s": 0.8,
               "invert": False, "armed_frac": 0.6},
-    "flick_down": {"enabled": True, "hand_widths": 0.9, "window_s": 0.40,
-                   "min_speed_hw_s": 4.5, "refractory_s": 1.0,
-                   "armed_frac": 0.6,
+    # Grab and pull down to minimise. `require_landing` False means it fires
+    # on the pull itself rather than waiting for the hand to stop, which is
+    # what made it feel unreliable; the closed fist is what keeps a dropped
+    # arm from triggering it. Distance and speed are lowered to match — a
+    # short, definite tug is enough.
+    "flick_down": {"enabled": True, "hand_widths": 0.6, "window_s": 0.40,
+                   "min_speed_hw_s": 3.0, "refractory_s": 1.0,
+                   "armed_frac": 0.6, "require_landing": False,
                    "settle_speed_hw_s": 1.5, "settle_timeout_s": 0.4},
     "volume": {"enabled": True, "steps_per_hs": 8.0, "down_ratio": 0.28,
                "up_ratio": 0.38, "debounce_frames": 2},

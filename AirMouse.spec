@@ -3,9 +3,12 @@
 #   venv\Scripts\python.exe -m PyInstaller AirMouse.spec --noconfirm
 #
 # One-folder rather than one-file: a one-file build re-extracts ~250 MB to a
-# temp directory on every launch, which makes startup feel broken. The console
-# is left on deliberately — if the camera is busy or a model is missing, the
-# app says so, and a silent window that never appears is worse than a console.
+# temp directory on every launch, which makes startup feel broken.
+#
+# No console. It used to be left on so that a busy camera or a missing model
+# had somewhere to say so — a silent window that never appears is worse than
+# an ugly one. applog.py takes that job over now: everything printed goes to
+# airmouse.log, and anything that stops startup raises a message box.
 
 from PyInstaller.utils.hooks import collect_all
 
@@ -22,6 +25,14 @@ hiddenimports = [
     "app_index",
     "attention",
     "face_tracker",
+    # the first-run walkthrough, imported lazily so that its Tk and camera
+    # setup cost nothing on an ordinary launch
+    "tutorial",
+    "applog",
+    # the walkthrough shows the camera inside a Tk window; ImageTk is a
+    # separate extension module and is easy to miss
+    "PIL.ImageTk",
+    "PIL.Image",
 ]
 
 # mediapipe ships .tflite graphs and native libs as package data; without
@@ -69,7 +80,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX-packed exes trip antivirus heuristics far more often
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
