@@ -9,7 +9,7 @@ command. Debounced so a passing pose doesn't fire, and latched so one
 continuous hold fires exactly once.
 """
 
-from gestures import fingers_extended
+from gestures import fingers_extended, thumb_extended
 
 SLOT_LABELS = ("1 finger", "2 fingers", "3 fingers", "4 fingers")  # slots 0..3
 
@@ -26,10 +26,19 @@ class FingerLauncher:
         self.progress = 0.0         # 0..1 hold progress (overlay)
 
     def _slot(self, pts):
-        """Slot 0..3 from how many fingers are up (1..4), or None."""
+        """Slot 0..3 from how many fingers are up (1..4), or None.
+
+        A fully open hand — four fingers AND the thumb — is neutral, not
+        slot 4. Raising an open hand is the most natural thing to do in
+        front of this app (it is literally how the cursor engages), and
+        counting it as a command meant simply showing your left hand
+        launched whatever lived in slot 4. Tucking the thumb while the four
+        fingers stay up is what says "this is the count, on purpose"."""
         if pts is None:
             return None
         n = sum(fingers_extended(pts).values())
+        if n == 4 and thumb_extended(pts):
+            return None
         return n - 1 if 1 <= n <= 4 else None
 
     def reset(self):

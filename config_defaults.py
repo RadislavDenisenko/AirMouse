@@ -16,6 +16,11 @@ APP_TITLE = f"{APP_NAME} {APP_VERSION} {APP_STAGE}"
 
 DEFAULT_CONFIG = {
     "camera_index": 0,
+    # False starts the preview minimised to the taskbar instead of popping a
+    # window over your work. It still exists — click it in the taskbar for
+    # the keys (Q quit, B settings, D debug) — it just doesn't open in your
+    # face. Settings can also always be opened with run_settings.bat.
+    "show_preview": True,
     # The first-run walkthrough. Set back to False (or press Replay in
     # Settings) to see it again — it owns the webcam while it runs, so the
     # tracker only starts once it has closed.
@@ -47,7 +52,12 @@ DEFAULT_CONFIG = {
     "pinch": {"down_ratio": 0.28, "up_ratio": 0.38, "debounce_frames": 2,
               "pinch_freeze_s": 0.15, "release_freeze_s": 0.10},
     "right_pinch": {"down_ratio": 0.28, "up_ratio": 0.38, "debounce_frames": 2},
-    "fist": {"down_ratio": 1.30, "up_ratio": 1.55, "debounce_frames": 2},
+    # Arming needs a REAL fist. 1.30 let a relaxed half-curl arm navigation,
+    # which read as the app firing on its own; a deliberate clench measures
+    # ~1.0 and comfortably clears 1.10, a resting hand does not. Reopening
+    # past up_ratio releases, so the wide gap keeps a held fist stable
+    # through motion blur.
+    "fist": {"down_ratio": 1.10, "up_ratio": 1.50, "debounce_frames": 2},
     # Precision brake: squeeze the middle, ring and pinky to slow the cursor
     # for small targets. Proportional, not a switch — `onset` is the curl
     # depth (in hand-size units) where slowing begins and `full` where it

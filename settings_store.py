@@ -310,9 +310,9 @@ SECTIONS = (
              "caption": "*How briskly to push* — a slow drop is ignored."},
             {"kind": "toggle", "label": "Reset to centre",
              "key": "recenter.enabled",
-             "caption": "*Rock-and-roll horns* — index and pinky up, held a "
-                        "beat — *jumps the cursor to the middle* of the "
-                        "screen."},
+             "caption": "*The shaka sign* — thumb and pinky out, the rest "
+                        "folded, held a beat — *jumps the cursor to the "
+                        "middle* of the screen."},
             {"kind": "slider", "label": "Reset hold time",
              "key": "recenter.hold_s", "lo": 0.15, "hi": 1.0, "fmt": "{:.2f}",
              "advanced": True,
@@ -425,6 +425,11 @@ SECTIONS = (
             {"kind": "stepper", "label": "Camera", "key": "camera_index",
              "lo": 0, "hi": 5,
              "caption": "*Which webcam to use* if you have more than one."},
+            {"kind": "toggle", "label": "Open the preview window",
+             "key": "show_preview",
+             "caption": "Off starts the camera preview *minimised to the "
+                        "taskbar* — the app runs the same, it just doesn't "
+                        "open a window over your work."},
             {"kind": "toggle", "label": "Low-light rescue",
              "key": "low_light_auto",
              "caption": "*Keeps 30fps in a dim room* by fixing the exposure."},

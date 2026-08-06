@@ -93,7 +93,7 @@ back, and `--tutorial` replays it directly.
 | Thumb + middle, tap | **Right click** |
 | Thumb + ring, held + move up/down | **Volume** — 1:1, so moving back down undoes it exactly |
 | Curl middle + ring + pinky | **Precision brake** — squeeze harder, move slower |
-| Rock-and-roll horns, held a beat | **Reset** — the cursor jumps to the screen centre |
+| Shaka sign (thumb + pinky out), held a beat | **Reset** — the cursor jumps to the screen centre |
 | Closed hand (a relaxed grab is enough) | **Arms navigation** — the cursor holds still |
 | Grab + swipe left / right | **Forward / Back** |
 | Grab + push down, let it land | **Minimise** the active window |
@@ -150,6 +150,10 @@ The hand has to be **raised** — knuckles clearly above the wrist — before
 any counting happens. The camera can read fingers perfectly well on a hand
 resting on your knee from across a room, and without that gate, sitting
 still launched apps.
+
+A fully open hand — thumb out too — is **neutral**, not slot 4. Raising an
+open hand is the most natural pose in front of this app, so it counts for
+nothing; tuck the thumb while the four fingers stay up to mean the count.
 
 The launcher hand works on its own — raise it by itself and it launches
 without ever touching the pointer. That only holds up if the two hands are

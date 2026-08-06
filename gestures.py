@@ -135,21 +135,47 @@ def hand_raised(pts, frame_h):
     return pts[MIDDLE_MCP][1] < pts[WRIST][1] - 0.05 * frame_h
 
 
-def is_rocker_pose(pts):
-    """Index and pinky up, middle and ring folded — the rock-and-roll horns.
+def thumb_extended(pts, min_ratio=0.5):
+    """Is the thumb clearly stuck out, away from the palm?
 
-    Chosen for the recenter gesture because it shares an outline with
-    nothing else here: peace is index+middle, the brake is index alone,
-    a fist is none. The thumb is left out of the test — it naturally
-    splays when making horns, but its landmark wobbles too much at range
-    to demand it."""
+    A tucked thumb lies across the palm near the finger bases; an extended
+    one reaches well clear of the index knuckle. Distance-normalised so it
+    holds at any range. Less reliable than the finger tests (the thumb's
+    landmarks wobble), which is why most poses ignore it — the two that
+    can't are the launcher's open-hand neutral and the reset sign."""
+    return _dist(pts[THUMB_TIP], pts[INDEX_MCP]) / hand_size(pts) >= min_ratio
+
+
+def finger_folded(pts, name, margin=0.35):
+    """Is this finger FULLY folded into the palm — not merely 'not extended'?
+
+    `fingers_extended` answers a binary tip-past-knuckle question, and its
+    complement includes every half-curled in-between shape a relaxed hand
+    makes. Gestures that must never fire by accident need the stronger
+    test: the tip pulled back inside the knuckle by a real margin (in
+    hand-size units), which only a deliberate fold produces."""
+    tip, pip = _FINGERS[name]
+    w = pts[WRIST]
+    return (_dist(pts[pip], w) - _dist(pts[tip], w)) / hand_size(pts) >= margin
+
+
+def is_reset_pose(pts):
+    """Thumb and pinky out, everything else FULLY folded — the shaka.
+
+    This replaced the rock-and-roll horns, which fired from a barely-curled
+    resting hand: 'not extended' let half-bent fingers through, and horns
+    share too much outline with casual poses. The shaka demands opposite
+    extremes from the hand at once — the two outermost digits stretched,
+    all three middle fingers folded to the palm — which nothing relaxed
+    produces."""
     ext = fingers_extended(pts)
-    return (ext["index"] and ext["pinky"]
-            and not ext["middle"] and not ext["ring"])
+    return (ext["pinky"] and thumb_extended(pts)
+            and not ext["index"]
+            and all(finger_folded(pts, f) for f in ("index", "middle", "ring")))
 
 
 class RockerDetector:
-    """Hold the horns briefly to teleport the cursor to the screen centre.
+    """Hold the shaka briefly to teleport the cursor to the screen centre.
 
     A relative-motion mouse has no home position, so after a long session
     the mapping between where your arm is comfortable and where the cursor
@@ -175,7 +201,7 @@ class RockerDetector:
     def update(self, pts, now, gate_on=True):
         """Feed one frame; returns True on the frame the recenter fires."""
         if not self.enabled or pts is None or not gate_on \
-                or not is_rocker_pose(pts):
+                or not is_reset_pose(pts):
             self._t0 = None
             self.progress = 0.0
             return False
@@ -440,7 +466,7 @@ class FistDetector:
     (grab = 0 extended, peace = 2), which lets the curl band be generous
     enough for a comfortable grab instead of demanding a hard clench."""
 
-    def __init__(self, down_ratio: float = 1.30, up_ratio: float = 1.55,
+    def __init__(self, down_ratio: float = 1.10, up_ratio: float = 1.50,
                  debounce_frames: int = 2):
         self._sw = _HysteresisSwitch(down_ratio, up_ratio, debounce_frames,
                                      require_prime=False)
@@ -746,7 +772,7 @@ class GestureController:
                  volume_up_ratio: float = 0.38,
                  volume_debounce_frames: int = 2,
                  volume_steps_per_hs: float = 8.0,
-                 fist_down_ratio: float = 1.30, fist_up_ratio: float = 1.55,
+                 fist_down_ratio: float = 1.10, fist_up_ratio: float = 1.50,
                  fist_debounce_frames: int = 2,
                  brake_enabled: bool = True, brake_onset: float = 0.15,
                  brake_full: float = 0.75, brake_min_scale: float = 0.25,

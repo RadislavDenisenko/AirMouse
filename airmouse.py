@@ -276,6 +276,73 @@ def ensure_framerate(cap, min_fps: float = 20.0, want_fps: float = 30.0):
     return fps, True
 
 
+_wndproc_refs = []      # the subclass callback must outlive the window
+
+
+def lock_preview_window(title):
+    """Make the preview window impossible to drag by its title bar.
+
+    Gesture-clicking the preview's caption used to freeze the whole app:
+    Windows enters a modal move loop the moment a caption drag starts, and
+    that loop blocks this process's only thread — so the capture loop, the
+    tracker and the cursor all stopped until the pinch released. The window
+    is subclassed and caption-drag messages are swallowed; every other
+    message (the close button, the sliders, keys) passes straight through.
+    The window stays where it opened, which for an always-on-top preview is
+    no real loss.
+    """
+    import ctypes
+    from ctypes import wintypes
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONDBLCLK, HTCAPTION = 0x00A1, 0x00A3, 2
+    GWLP_WNDPROC = -4
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = u32.FindWindowW(None, title)
+        if not hwnd:
+            return False
+        proto = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND,
+                                   ctypes.c_uint, wintypes.WPARAM,
+                                   wintypes.LPARAM)
+        u32.CallWindowProcW.restype = ctypes.c_ssize_t
+        u32.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND,
+                                        ctypes.c_uint, wintypes.WPARAM,
+                                        wintypes.LPARAM]
+        u32.SetWindowLongPtrW.restype = ctypes.c_void_p
+        u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int,
+                                          ctypes.c_void_p]
+        old = {"proc": None}
+
+        @proto
+        def wndproc(h, msg, wp, lp):
+            if msg in (WM_NCLBUTTONDOWN, WM_NCLBUTTONDBLCLK) \
+                    and wp == HTCAPTION:
+                return 0
+            return u32.CallWindowProcW(old["proc"], h, msg, wp, lp)
+
+        old["proc"] = u32.SetWindowLongPtrW(
+            hwnd, GWLP_WNDPROC, ctypes.cast(wndproc, ctypes.c_void_p))
+        if not old["proc"]:
+            return False
+        _wndproc_refs.append((wndproc, old))
+        return True
+    except Exception:
+        return False        # cosmetic guard; never worth failing startup for
+
+
+def minimize_window_by_title(title):
+    """Send a window to the taskbar without destroying it."""
+    import ctypes
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = u32.FindWindowW(None, title)
+        if hwnd:
+            u32.ShowWindow(hwnd, 6)          # SW_MINIMIZE
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def draw_attention(frame, attn):
     """Top-right attention readout + a dim veil while control is suspended."""
     h, w = frame.shape[:2]
@@ -770,6 +837,12 @@ def main():
 
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     cv2.setWindowProperty(WINDOW, cv2.WND_PROP_TOPMOST, 1)
+    lock_preview_window(WINDOW)
+    if not cfg.get("show_preview", True):
+        # Minimised, not absent: the window still carries the keyboard
+        # commands and the tuning sliders, it just doesn't open over your
+        # work. The taskbar brings it back when wanted.
+        minimize_window_by_title(WINDOW)
     # Live sensitivity sliders (x10 so they carry one decimal). cv2 trackbars
     # start at 0, so values are clamped when read.
     cv2.createTrackbar("base x10", WINDOW, int(controller.sensitivity * 10), 300, lambda v: None)

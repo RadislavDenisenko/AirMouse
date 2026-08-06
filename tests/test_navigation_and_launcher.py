@@ -222,7 +222,10 @@ t += DT
 info = c_gap.update(fist(320, 240), FRAME, t)
 check("brief dropout keeps the fist armed", info["fist_armed"])
 
-# a RELAXED grab (curl ~1.1) arms — the old 1.05 bar demanded a hard clench
+# Arming needs a REAL fist now. The 1.30 band deliberately let a relaxed
+# ~1.1 "doorknob" grab arm, and in live use that read as the app firing on
+# its own — a half-curled resting hand kept arming navigation. A deliberate
+# clench measures well under 1.10; a loose grab does not.
 def loose_grab(px, py):
     pts = list(synthetic_hand(px, py))
     for b in (5, 9, 13, 17):
@@ -242,8 +245,16 @@ t = 0.0
 for _ in range(3):
     t += DT
     info = c_lg.update(loose_grab(320, 240), FRAME, t)
-check("relaxed grab arms (no hard clench needed)", info["fist_armed"],
+check("a loose half-grab no longer arms navigation", not info["fist_armed"],
       f"curl={_curl(_lg):.2f} armed={info['fist_armed']}")
+m_fg = NullMouse()
+c_fg = GestureController(m_fg)
+t = 0.0
+for _ in range(3):
+    t += DT
+    info = c_fg.update(fist(320, 240), FRAME, t)
+check("a genuine fist still arms", info["fist_armed"],
+      f"curl={_curl(fist(320, 240)):.2f}")
 
 # The arming gate is finger COUNT, not curl alone: that is what lets the curl
 # band be loose enough for a relaxed grab without the peace sign (whose curl
@@ -698,18 +709,50 @@ barely[0] = (320, barely[9][1] + 0.02 * FH)    # wrist just under the knuckles
 check("a barely-tilted hand stays below the raise margin",
       not hand_raised(barely, FH))
 
-# ================== rock-and-roll horns = recenter the cursor ================
-from gestures import RockerDetector, is_rocker_pose
+# ==================== the shaka sign = recenter the cursor ===================
+# Thumb and pinky out, EVERYTHING else fully folded. It replaced the
+# rock-and-roll horns, which fired from a barely-curled resting hand:
+# "not extended" let half-bent fingers through.
+from gestures import (RockerDetector, is_reset_pose, thumb_extended,
+                      finger_folded)
 
-horns = count_hand(320, 240, ("index", "pinky"))
-check("index+pinky with middle+ring curled is the rocker pose",
-      is_rocker_pose(horns))
-check("a peace sign is not the rocker pose",
-      not is_rocker_pose(count_hand(320, 240, ("index", "middle"))))
-check("the brake pose is not the rocker pose",
-      not is_rocker_pose(count_hand(320, 240, ("index",))))
-check("an open hand is not the rocker pose",
-      not is_rocker_pose(synthetic_hand(320, 240)))
+horns = count_hand(320, 240, ("pinky",))       # thumb splays by default
+check("thumb+pinky with the rest fully folded is the reset sign",
+      is_reset_pose(horns))
+check("a peace sign is not the reset sign",
+      not is_reset_pose(count_hand(320, 240, ("index", "middle"))))
+check("the brake pose is not the reset sign",
+      not is_reset_pose(count_hand(320, 240, ("index",))))
+check("an open hand is not the reset sign",
+      not is_reset_pose(synthetic_hand(320, 240)))
+check("the old horns (index up) are no longer the reset sign",
+      not is_reset_pose(count_hand(320, 240, ("index", "pinky"))))
+
+
+def half_curl(px, py, up=("pinky",)):
+    """Fingers only PART-folded — a relaxed hand, not a deliberate sign."""
+    pts = list(synthetic_hand(px, py))
+    bases = {"index": 5, "middle": 9, "ring": 13, "pinky": 17}
+    for name, b in bases.items():
+        if name in up:
+            continue
+        x = pts[b][0]
+        pts[b + 1] = (x, py - 90)
+        pts[b + 2] = (x, py - 75)
+        pts[b + 3] = (x, py - 62)      # tip barely inside the knuckle
+    return pts
+
+
+check("half-curled fingers are NOT 'fully folded' — a relaxed hand can't fire",
+      not is_reset_pose(half_curl(320, 240)))
+check("...because the fold test demands a real margin",
+      not finger_folded(half_curl(320, 240), "middle"))
+
+# a tucked thumb kills the sign too
+tucked = list(horns)
+tucked[4] = (320 - 10, 240 - 45)                # thumb across the palm
+check("a tucked thumb is not the reset sign", not is_reset_pose(tucked))
+check("...caught by the thumb test itself", not thumb_extended(tucked))
 
 rk = RockerDetector(hold_s=0.3, refractory_s=1.0)
 t, fired = 0.0, 0
@@ -822,15 +865,34 @@ for i in range(15):
         fired.append(f)
 check("3 fingers fire slot 2", fired == [2], f"fired={fired}")
 
-# all four fingers -> slot 3
+# Four fingers with the THUMB TUCKED -> slot 3. A fully open hand — thumb
+# out too — is neutral now: raising an open hand is the most natural pose in
+# front of this app (it is how the cursor engages), and counting it as a
+# command meant showing your left hand launched whatever lived in slot 4.
+def four_no_thumb(px, py):
+    pts = list(synthetic_hand(px, py))
+    pts[4] = (px - 10, py - 45)              # thumb across the palm
+    return pts
+
+
 lc4a = FingerLauncher(hold_s=0.3, cooldown_s=1.0)
 t, fired = 0.0, []
 for i in range(20):
     t += DT
-    f = lc4a.update(synthetic_hand(200, 240), t)
+    f = lc4a.update(four_no_thumb(200, 240), t)
     if f is not None:
         fired.append(f)
-check("4 fingers (open hand) fire slot 3 once", fired == [3],
+check("4 fingers with the thumb tucked fire slot 3 once", fired == [3],
+      f"fired={fired}")
+
+lc_open = FingerLauncher(hold_s=0.3, cooldown_s=1.0)
+t, fired = 0.0, []
+for i in range(20):
+    t += DT
+    f = lc_open.update(synthetic_hand(200, 240), t)
+    if f is not None:
+        fired.append(f)
+check("a fully open hand (thumb out) is neutral, not slot 4", fired == [],
       f"fired={fired}")
 
 # changing the count resets the hold; cooldown blocks a rapid second fire
