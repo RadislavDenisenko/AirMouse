@@ -669,6 +669,118 @@ for _ in range(5):                               # the remaining 0.17 s
 check("the engage completes on the pose time it actually had",
       info["state"] == TRACKING, f"state={info['state']}")
 
+# ================= a resting hand must not drive the launcher ================
+# From a couple of metres back the camera reads fingers on a hand lying on a
+# knee, and counting those launched apps while the user just sat there. The
+# gate: the hand only counts while it is RAISED — knuckles clearly above the
+# wrist — which a resting hand never is.
+from gestures import hand_raised
+
+FH = FRAME[1]
+check("an upright hand counts as raised",
+      hand_raised(synthetic_hand(320, 240), FH))
+
+
+def resting_hand(px, py):
+    """A hand lying flat-ish on a knee: wrist and knuckles nearly level,
+    knuckles a touch BELOW the wrist, fingers readable."""
+    pts = [(x, py + (y - py) * 0.15) for (x, y) in synthetic_hand(px, py)]
+    pts[0] = (px, py - 6)                  # wrist a shade above the knuckles
+    return pts
+
+
+check("a hand resting on a knee is not raised",
+      not hand_raised(resting_hand(320, 400), FH))
+
+# barely-tilted is still not enough — the margin is deliberate
+barely = list(synthetic_hand(320, 240))
+barely[0] = (320, barely[9][1] + 0.02 * FH)    # wrist just under the knuckles
+check("a barely-tilted hand stays below the raise margin",
+      not hand_raised(barely, FH))
+
+# ================== rock-and-roll horns = recenter the cursor ================
+from gestures import RockerDetector, is_rocker_pose
+
+horns = count_hand(320, 240, ("index", "pinky"))
+check("index+pinky with middle+ring curled is the rocker pose",
+      is_rocker_pose(horns))
+check("a peace sign is not the rocker pose",
+      not is_rocker_pose(count_hand(320, 240, ("index", "middle"))))
+check("the brake pose is not the rocker pose",
+      not is_rocker_pose(count_hand(320, 240, ("index",))))
+check("an open hand is not the rocker pose",
+      not is_rocker_pose(synthetic_hand(320, 240)))
+
+rk = RockerDetector(hold_s=0.3, refractory_s=1.0)
+t, fired = 0.0, 0
+for _ in range(30):                        # held a full second
+    t += DT
+    if rk.update(horns, t):
+        fired += 1
+check("held horns fire exactly once", fired == 1, f"fired={fired}")
+check("...and not again until the refractory has passed",
+      not rk.update(horns, t + 0.2))
+check("...but do fire again after it", any(
+      rk.update(horns, t + 1.1 + i * DT) for i in range(12)))
+
+rk2 = RockerDetector(hold_s=0.3)
+t = 0.0
+for _ in range(4):                         # 0.13s — under the hold
+    t += DT
+    fired = rk2.update(horns, t)
+check("a transient flash of horns does not fire", not fired)
+rk2.update(synthetic_hand(320, 240), t + DT)
+check("...and opening the hand resets the hold", rk2.progress == 0.0)
+
+# through the controller: horns held -> mouse.center(), and never mid-drag
+m_rc = NullMouse()
+c_rc = GestureController(m_rc, engage_hold_s=0.25, dead_zone_px=0.0,
+                         filter_min_cutoff=None, recenter_hold_s=0.3)
+t = 0.0
+for _ in range(12):                        # engage
+    t += DT
+    c_rc.update(synthetic_hand(320, 240), FRAME, t)
+assert c_rc.state == TRACKING, c_rc.state
+for _ in range(14):                        # hold the horns
+    t += DT
+    c_rc.update(horns, FRAME, t)
+check("held horns teleport the cursor home", ("center",) in m_rc.events,
+      f"events={[e for e in m_rc.events if e[0] != 'move']}")
+
+m_rd = NullMouse()
+c_rd = GestureController(m_rd, engage_hold_s=0.25, dead_zone_px=0.0,
+                         filter_min_cutoff=None, recenter_hold_s=0.3)
+t = 0.0
+for _ in range(12):
+    t += DT
+    c_rd.update(synthetic_hand(300, 240), FRAME, t)
+for _ in range(4):                         # pinch: left button held
+    t += DT
+    c_rd.update(hand(300, 240, 20), FRAME, t)
+assert ("down",) in m_rd.events
+for _ in range(14):                        # horns after the pinch
+    t += DT
+    c_rd.update(horns, FRAME, t)
+# You cannot physically hold a pinch AND make horns — extending the index
+# releases the button. So the invariant is ORDER: the drag always ends
+# before any recenter can fire; the cursor is never yanked mid-hold.
+evs = [e[0] for e in m_rd.events if e[0] != "move"]
+check("the drag is released before any recenter fires",
+      "center" not in evs[:evs.index("up") + 1] if "up" in evs else False,
+      f"events={evs}")
+
+m_off = NullMouse()
+c_off = GestureController(m_off, engage_hold_s=0.25, dead_zone_px=0.0,
+                          filter_min_cutoff=None, recenter_enabled=False)
+t = 0.0
+for _ in range(12):
+    t += DT
+    c_off.update(synthetic_hand(320, 240), FRAME, t)
+for _ in range(14):
+    t += DT
+    c_off.update(horns, FRAME, t)
+check("recenter can be switched off", ("center",) not in m_off.events)
+
 # ==================== FingerLauncher (count-based slots) =====================
 lc = FingerLauncher(hold_s=0.3, cooldown_s=1.0)
 t, fired = 0.0, []

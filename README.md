@@ -93,6 +93,7 @@ back, and `--tutorial` replays it directly.
 | Thumb + middle, tap | **Right click** |
 | Thumb + ring, held + move up/down | **Volume** — 1:1, so moving back down undoes it exactly |
 | Curl middle + ring + pinky | **Precision brake** — squeeze harder, move slower |
+| Rock-and-roll horns, held a beat | **Reset** — the cursor jumps to the screen centre |
 | Closed hand (a relaxed grab is enough) | **Arms navigation** — the cursor holds still |
 | Grab + swipe left / right | **Forward / Back** |
 | Grab + push down, let it land | **Minimise** the active window |
@@ -144,6 +145,11 @@ motion-blurred frame mid-swipe can't disarm you.
 Hold up **1–4 fingers** on your other hand for ~0.3 s to launch something.
 It's the **count** that matters, not which fingers — two fingers means index
 plus middle, and any combination adding to the same count works.
+
+The hand has to be **raised** — knuckles clearly above the wrist — before
+any counting happens. The camera can read fingers perfectly well on a hand
+resting on your knee from across a room, and without that gate, sitting
+still launched apps.
 
 The launcher hand works on its own — raise it by itself and it launches
 without ever touching the pointer. That only holds up if the two hands are

@@ -123,6 +123,76 @@ def brake_curl(pts):
     return total / len(BRAKE_FINGERS)
 
 
+def hand_raised(pts, frame_h):
+    """Is this hand actually held UP, knuckles clearly above the wrist?
+
+    The launcher used to count fingers on any detected hand, and from a
+    couple of metres back the camera can see a hand resting on a knee well
+    enough to read fingers on it — so sitting still launched apps. A resting
+    hand lies flat or tilted; a hand deliberately shown to the camera hangs
+    from a raised forearm, knuckles on top. Palm or back of the hand both
+    pass; orientation is not the point, elevation is."""
+    return pts[MIDDLE_MCP][1] < pts[WRIST][1] - 0.05 * frame_h
+
+
+def is_rocker_pose(pts):
+    """Index and pinky up, middle and ring folded — the rock-and-roll horns.
+
+    Chosen for the recenter gesture because it shares an outline with
+    nothing else here: peace is index+middle, the brake is index alone,
+    a fist is none. The thumb is left out of the test — it naturally
+    splays when making horns, but its landmark wobbles too much at range
+    to demand it."""
+    ext = fingers_extended(pts)
+    return (ext["index"] and ext["pinky"]
+            and not ext["middle"] and not ext["ring"])
+
+
+class RockerDetector:
+    """Hold the horns briefly to teleport the cursor to the screen centre.
+
+    A relative-motion mouse has no home position, so after a long session
+    the mapping between where your arm is comfortable and where the cursor
+    sits can drift somewhere awkward. This is the reset.
+
+    The hold is short (~0.3s) but real: fingers pass through all sorts of
+    shapes between poses, and firing on a single frame of accidental horns
+    would fling the cursor mid-gesture — the same transient-pose lesson the
+    brake taught. A refractory stops the held pose re-firing every frame.
+    """
+
+    def __init__(self, enabled=True, hold_s=0.3, refractory_s=1.0):
+        self.enabled = enabled
+        self.hold_s = hold_s
+        self.refractory_s = refractory_s
+        self.reset()
+
+    def reset(self):
+        self._t0 = None
+        self._until = 0.0
+        self.progress = 0.0
+
+    def update(self, pts, now, gate_on=True):
+        """Feed one frame; returns True on the frame the recenter fires."""
+        if not self.enabled or pts is None or not gate_on \
+                or not is_rocker_pose(pts):
+            self._t0 = None
+            self.progress = 0.0
+            return False
+        if now < self._until:
+            self.progress = 0.0
+            return False
+        if self._t0 is None:
+            self._t0 = now
+        self.progress = min(1.0, (now - self._t0) / max(1e-6, self.hold_s))
+        if now - self._t0 >= self.hold_s:
+            self._t0 = None
+            self.progress = 0.0
+            self._until = now + self.refractory_s
+            return True
+        return False
+
+
 def is_brake_pose(pts):
     """Precision-brake shape: index clear of the curl, middle folded into it.
 
@@ -681,6 +751,9 @@ class GestureController:
                  brake_enabled: bool = True, brake_onset: float = 0.15,
                  brake_full: float = 0.75, brake_min_scale: float = 0.25,
                  brake_smoothing: float = 0.35,
+                 recenter_enabled: bool = True,
+                 recenter_hold_s: float = 0.3,
+                 recenter_refractory_s: float = 1.0,
                  scroll_natural: bool = False,
                  scroll_dead_zone_hs: float = 0.3,
                  scroll_gain_notches_s: float = 30.0,
@@ -752,6 +825,8 @@ class GestureController:
                                   fist_debounce_frames)
         self._brake = BrakeDetector(brake_enabled, brake_onset, brake_full,
                                     brake_min_scale, brake_smoothing)
+        self._rocker = RockerDetector(recenter_enabled, recenter_hold_s,
+                                      recenter_refractory_s)
         self.volume_enabled = volume_enabled
         self.volume_steps_per_hs = volume_steps_per_hs
         self._vpinch = PinchDetector(volume_down_ratio, volume_up_ratio,
@@ -937,6 +1012,7 @@ class GestureController:
                 "scroll_dead_px": self.scroll_dead_zone_hs
                                   * (self._scroll_hs or self._hand_scale or 0.0),
                 "volume_down": self._vol_down,
+                "recenter_progress": self._rocker.progress,
                 "brake": self._brake.amount,
                 "brake_scale": self._brake.scale,
                 "brake_m": self._brake.metrics,
@@ -1198,6 +1274,19 @@ class GestureController:
             self._right_down = False
             self.mouse.right_up()
             self._freeze_until = now + self.release_freeze_s
+
+        # Rock-and-roll horns held briefly = teleport the cursor home to the
+        # screen centre. A relative mouse has no home position, so a long
+        # session can drift the comfortable arm position somewhere awkward;
+        # this is the reset. Gated off any held button so a drag can never
+        # be yanked across the screen mid-hold.
+        if self._rocker.update(pts, now,
+                               gate_on=(self._left_owner is None
+                                        and not self._right_down
+                                        and not self._vol_down)):
+            self.mouse.center()
+            self._freeze_until = max(self._freeze_until, now + 0.25)
+            self._prev_palm = pos
 
         # Fist armed: the hand is a swipe trigger now, not a pointer — freeze
         # the cursor so the coming stroke can't smear it across the screen.

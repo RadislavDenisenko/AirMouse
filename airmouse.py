@@ -26,7 +26,8 @@ from config_defaults import (APP_TITLE, APP_VERSION,  # noqa: F401
 from hand_tracker import (HandTracker, draw_landmarks, to_pixel_points,
                           WRIST, THUMB_TIP, INDEX_TIP, MIDDLE_TIP)
 from gestures import (GestureController, IDLE, ENGAGING, TRACKING, PINCHED,
-                      RCLICK, ARMED, SCROLL, VOLUME, BRAKING, POINT)
+                      RCLICK, ARMED, SCROLL, VOLUME, BRAKING, POINT,
+                      hand_raised)
 from hand_roles import RoleAssigner
 from launcher import FingerLauncher, SLOT_LABELS
 from magnet import MagnetMouse, TargetFinder, resolve_params
@@ -98,6 +99,9 @@ def make_controller(mouse, cfg: dict) -> GestureController:
         fist_down_ratio=cfg["fist"]["down_ratio"],
         fist_up_ratio=cfg["fist"]["up_ratio"],
         fist_debounce_frames=cfg["fist"]["debounce_frames"],
+        recenter_enabled=cfg.get("recenter", {}).get("enabled", True),
+        recenter_hold_s=cfg.get("recenter", {}).get("hold_s", 0.3),
+        recenter_refractory_s=cfg.get("recenter", {}).get("refractory_s", 1.0),
         brake_enabled=cfg.get("brake", {}).get("enabled", True),
         brake_onset=cfg.get("brake", {}).get("onset", 0.15),
         brake_full=cfg.get("brake", {}).get("full", 0.75),
@@ -835,10 +839,13 @@ def main():
         info = controller.update(cursor_pts, (w, h), now, attending=attending,
                                  suspend=cursor_pts is None and bool(hand_list))
 
-        # Left-hand finger launcher — only while attending, and only once the
-        # off hand has been stably present past the role cooldown, so a hand
-        # that just entered the frame (or just changed role) can't insta-fire.
-        off_ok = attending and assigner.off_ready(now)
+        # Left-hand finger launcher — only while attending, only once the off
+        # hand has been stably present past the role cooldown, and only while
+        # that hand is actually RAISED. From a couple of metres back the
+        # camera reads fingers perfectly well on a hand resting on a knee,
+        # and counting those launched apps while the user sat still.
+        off_ok = (attending and assigner.off_ready(now)
+                  and off_pts is not None and hand_raised(off_pts, h))
         fired = launcher.update(off_pts if off_ok else None, now)
         if fired is not None:
             cmds = read_launcher_commands()

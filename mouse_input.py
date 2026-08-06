@@ -111,6 +111,16 @@ class Mouse:
         if hwnd:
             _user32.ShowWindow(hwnd, SW_MINIMIZE)
 
+    def center(self):
+        """Park the pointer in the middle of the primary screen.
+
+        SetCursorPos rather than a computed SendInput move: the point of the
+        gesture is "wherever the cursor ended up, bring it home", and an
+        absolute set cannot accumulate error the way a relative jump can."""
+        w = _user32.GetSystemMetrics(0)      # SM_CXSCREEN
+        h = _user32.GetSystemMetrics(1)      # SM_CYSCREEN
+        _user32.SetCursorPos(w // 2, h // 2)
+
     def volume(self, steps: int):
         """System volume, one notch per step (+ up, - down).
 
@@ -162,6 +172,9 @@ class NullMouse:
 
     def minimize_window(self):
         self.events.append(("minimize",))
+
+    def center(self):
+        self.events.append(("center",))
 
     def volume(self, steps: int):
         if steps:

@@ -308,6 +308,16 @@ SECTIONS = (
              "key": "flick_down.min_speed_hw_s", "lo": 1.5, "hi": 12.0,
              "fmt": "{:.1f}",
              "caption": "*How briskly to push* — a slow drop is ignored."},
+            {"kind": "toggle", "label": "Reset to centre",
+             "key": "recenter.enabled",
+             "caption": "*Rock-and-roll horns* — index and pinky up, held a "
+                        "beat — *jumps the cursor to the middle* of the "
+                        "screen."},
+            {"kind": "slider", "label": "Reset hold time",
+             "key": "recenter.hold_s", "lo": 0.15, "hi": 1.0, "fmt": "{:.2f}",
+             "advanced": True,
+             "caption": "*How long to hold the horns* before the cursor "
+                        "jumps home."},
             {"kind": "toggle", "label": "Volume pinch",
              "key": "volume.enabled",
              "caption": "*Thumb to ring finger sets the volume* — pull up "

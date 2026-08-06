@@ -86,6 +86,10 @@ DEFAULT_CONFIG = {
                    "settle_speed_hw_s": 1.5, "settle_timeout_s": 0.4},
     "volume": {"enabled": True, "steps_per_hs": 8.0, "down_ratio": 0.28,
                "up_ratio": 0.38, "debounce_frames": 2},
+    # Rock-and-roll horns (index + pinky up, middle + ring curled) held for
+    # `hold_s` teleports the cursor to the screen centre — the reset for a
+    # relative mouse that has drifted your arm somewhere uncomfortable.
+    "recenter": {"enabled": True, "hold_s": 0.3, "refractory_s": 1.0},
     "roles": {"launcher_cooldown_s": 1.0},
     # Cursor magnetism: clickable things get sticky as the cursor nears them.
     # Simple mode (custom_tuning False) ignores the tuning values below and
