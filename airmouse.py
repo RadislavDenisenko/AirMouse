@@ -329,6 +329,17 @@ def lock_preview_window(title):
         return False        # cosmetic guard; never worth failing startup for
 
 
+def preview_minimized(title):
+    """Is the preview sitting in the taskbar right now?"""
+    import ctypes
+    try:
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = u32.FindWindowW(None, title)
+        return bool(hwnd and u32.IsIconic(hwnd))
+    except Exception:
+        return False
+
+
 def minimize_window_by_title(title):
     """Send a window to the taskbar without destroying it."""
     import ctypes
@@ -838,11 +849,12 @@ def main():
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     cv2.setWindowProperty(WINDOW, cv2.WND_PROP_TOPMOST, 1)
     lock_preview_window(WINDOW)
-    if not cfg.get("show_preview", True):
-        # Minimised, not absent: the window still carries the keyboard
-        # commands and the tuning sliders, it just doesn't open over your
-        # work. The taskbar brings it back when wanted.
-        minimize_window_by_title(WINDOW)
+    # NOTE: when the preview is configured hidden it is minimised INSIDE the
+    # loop, after the first imshow — not here. An AUTOSIZE window minimised
+    # before it has ever drawn a frame never lays out its client area, and
+    # restoring it from the taskbar showed a grey rectangle instead of the
+    # camera.
+    preview_hidden_yet = False
     # Live sensitivity sliders (x10 so they carry one decimal). cv2 trackbars
     # start at 0, so values are clamped when read.
     cv2.createTrackbar("base x10", WINDOW, int(controller.sensitivity * 10), 300, lambda v: None)
@@ -880,11 +892,17 @@ def main():
             attending = attention.update(face_tracker.latest(), now)
         frame_i += 1
 
-        # live sensitivity sliders
-        controller.sensitivity = max(0.5, cv2.getTrackbarPos("base x10", WINDOW) / 10.0)
-        controller.edge_multiplier = max(1.0, cv2.getTrackbarPos("edge x10", WINDOW) / 10.0)
-        controller.radius_scale = max(0.5, cv2.getTrackbarPos("radius x10", WINDOW) / 10.0)
-        controller.scroll_gain_notches_s = float(max(1, cv2.getTrackbarPos("scroll", WINDOW)))
+        # Live sensitivity sliders — but ONLY while the window is actually
+        # up. A minimised or never-shown window still answers getTrackbarPos,
+        # with values nobody set: they were applied every frame (sensitivity
+        # jumped with no visible cause) and then persisted to config on quit,
+        # which is how a garbage 6.355 ended up saved. Hidden preview =
+        # config values stand.
+        if not preview_minimized(WINDOW):
+            controller.sensitivity = max(0.5, cv2.getTrackbarPos("base x10", WINDOW) / 10.0)
+            controller.edge_multiplier = max(1.0, cv2.getTrackbarPos("edge x10", WINDOW) / 10.0)
+            controller.radius_scale = max(0.5, cv2.getTrackbarPos("radius x10", WINDOW) / 10.0)
+            controller.scroll_gain_notches_s = float(max(1, cv2.getTrackbarPos("scroll", WINDOW)))
 
         # detect both hands, split into cursor (right) + off (left) hand
         hand_list = []
@@ -973,6 +991,14 @@ def main():
         draw_swipe_flash(frame, info, now)
 
         cv2.imshow(WINDOW, frame)
+        if not preview_hidden_yet and not cfg.get("show_preview", True):
+            # Now that one frame has drawn and the window has a real layout,
+            # it is safe to send it to the taskbar. Restoring it later shows
+            # the live camera, not a grey shell.
+            preview_hidden_yet = True
+            minimize_window_by_title(WINDOW)
+        elif not preview_hidden_yet:
+            preview_hidden_yet = True
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), ord("Q"), 27):
             break
