@@ -65,8 +65,14 @@ DEFAULT_CONFIG = {
     # deliberate headroom: fingers rest half-curled while pointing, and that
     # must never brake on its own. `smoothing` eases the amount so a steady
     # squeeze gives a steady speed instead of shimmering.
-    "brake": {"enabled": True, "onset": 0.15, "full": 0.75,
-              "min_scale": 0.25, "smoothing": 0.35},
+    # Tuned hotter after live use: the old curve wanted most of a full
+    # squeeze before it felt like anything. Braking starts almost as soon as
+    # the fingers begin to fold, bottoms out at about half squeeze, and the
+    # floor is lower — a firm squeeze is a real crawl. The shape gate (index
+    # out, middle folded) is what keeps a resting hand from braking, so the
+    # onset can afford to be this eager.
+    "brake": {"enabled": True, "onset": 0.08, "full": 0.55,
+              "min_scale": 0.15, "smoothing": 0.35},
     # Scrolling is rate-based, so `gain` is how fast a small offset already
     # moves the page. It was tuned low enough that people leaned further and
     # further out of the dead zone waiting for something to happen.

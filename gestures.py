@@ -264,7 +264,7 @@ class BrakeDetector:
     zero is zero.
     """
 
-    def __init__(self, enabled=True, onset=0.15, full=0.75, min_scale=0.25,
+    def __init__(self, enabled=True, onset=0.08, full=0.55, min_scale=0.15,
                  smoothing=0.35, enter_frames=4, stick_frames=8):
         self.enabled = enabled
         self.onset = onset
@@ -774,8 +774,8 @@ class GestureController:
                  volume_steps_per_hs: float = 8.0,
                  fist_down_ratio: float = 1.10, fist_up_ratio: float = 1.50,
                  fist_debounce_frames: int = 2,
-                 brake_enabled: bool = True, brake_onset: float = 0.15,
-                 brake_full: float = 0.75, brake_min_scale: float = 0.25,
+                 brake_enabled: bool = True, brake_onset: float = 0.08,
+                 brake_full: float = 0.55, brake_min_scale: float = 0.15,
                  brake_smoothing: float = 0.35,
                  recenter_enabled: bool = True,
                  recenter_hold_s: float = 0.3,

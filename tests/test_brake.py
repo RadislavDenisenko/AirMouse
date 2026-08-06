@@ -369,8 +369,10 @@ check("inverted thresholds degrade to a step, not a crash",
 c_junk = ctrl(NullMouse())
 for junk in (None, [], "brake", 42):
     c_junk.apply_brake_params(junk)
+from gestures import BrakeDetector as _BD
 check("a malformed brake block in config.json is ignored, not fatal",
-      c_junk._brake.min_scale == 0.25, f"min_scale={c_junk._brake.min_scale}")
+      c_junk._brake.min_scale == _BD().min_scale,
+      f"min_scale={c_junk._brake.min_scale}")
 
 print()
 print("ALL PASS" if not failures else f"FAILED: {failures}")
