@@ -193,11 +193,11 @@ check("the hand and camera panels do not overlap",
 
 # ============================ the done-predicates ============================
 FULL = {"engaged": True, "clicks": 1, "rclicks": 1, "volume": 2,
-        "brake": 0.9, "armed": True, "scrolling": True, "nav": 1,
+        "brake": 0.9, "armed": True, "scrolling": True, "wheel": 3, "nav": 1,
         "back": 1, "forward": 1, "minimised": 1}
 EMPTY = {"engaged": False, "clicks": 0, "rclicks": 0, "volume": 0,
-         "brake": 0.0, "armed": False, "scrolling": False, "nav": 0,
-         "back": 0, "forward": 0, "minimised": 0}
+         "brake": 0.0, "armed": False, "scrolling": False, "wheel": 0,
+         "nav": 0, "back": 0, "forward": 0, "minimised": 0}
 
 check("every step passes when its gesture is performed",
       all(s["done"](FULL) for s in tutorial.STEPS),
@@ -206,17 +206,39 @@ check("no step passes on an idle hand",
       not any(s["done"](EMPTY) for s in tutorial.STEPS),
       f"fired={[s['key'] for s in tutorial.STEPS if s['done'](EMPTY)]}")
 
-# each step must key off its OWN gesture: flipping one flag should satisfy
-# exactly one step, or the walkthrough would skip ahead on the wrong pose
-for flag, expect in (("clicks", "click"), ("rclicks", "rclick"),
-                     ("volume", "volume"), ("brake", "brake"),
-                     ("back", "swipe_back"), ("forward", "swipe_fwd"),
-                     ("minimised", "minimize"), ("scrolling", "scroll")):
+# each step must key off its OWN gesture: flipping one gesture's flags
+# should satisfy exactly one step, or the walkthrough would skip ahead on
+# the wrong pose. Scroll takes TWO flags by design — the pose AND a wheel
+# notch — because holding a peace sign dead still enters scroll mode in
+# 0.06s, and "you are scrolling" must mean the page actually moved.
+for flags, expect in ((("clicks",), "click"), (("rclicks",), "rclick"),
+                      (("volume",), "volume"), (("brake",), "brake"),
+                      (("back",), "swipe_back"), (("forward",), "swipe_fwd"),
+                      (("minimised",), "minimize"),
+                      (("scrolling", "wheel"), "scroll")):
     state = dict(EMPTY)
-    state[flag] = FULL[flag]
+    for flag in flags:
+        state[flag] = FULL[flag]
     fired = [s["key"] for s in tutorial.STEPS if s["done"](state)]
-    check(f"only the {expect} step reacts to {flag}", fired == [expect],
-          f"fired={fired}")
+    check(f"only the {expect} step reacts to {'+'.join(flags)}",
+          fired == [expect], f"fired={fired}")
+
+# A MODERATE squeeze satisfies the brake step. The demo bar visibly slows
+# well before a deep curl, so the step must acknowledge the squeeze around
+# the depth the screen first rewards — demanding brake > 0.5 made a correct
+# medium squeeze watch the bar move while "Done" never came.
+state = dict(EMPTY)
+state["brake"] = 0.3
+fired = [s["key"] for s in tutorial.STEPS if s["done"](state)]
+check("a moderate squeeze is enough for the brake step", fired == ["brake"],
+      f"fired={fired}")
+
+# the scroll pose held motionless satisfies NOTHING — that is the point
+state = dict(EMPTY)
+state["scrolling"] = True
+check("the scroll pose alone, hand still, satisfies no step",
+      not any(s["done"](state) for s in tutorial.STEPS),
+      f"fired={[s['key'] for s in tutorial.STEPS if s['done'](state)]}")
 
 # ===================== the contract with GestureController ===================
 # The walkthrough reads these straight off a live info dict. A rename in

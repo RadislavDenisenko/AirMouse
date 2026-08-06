@@ -562,6 +562,17 @@ class FlickDownDetector:
         self._pending_t0 = None
         self._hist = []
 
+    def hold_off(self, until):
+        """External suppression: another gesture just fired and its follow-
+        through must not read as a flick. The dominant case is the arm drop
+        after a swipe — the fist stays armed while held (by design, so
+        back-back-back works), and lowering the still-closed hand out of
+        frame is downward-dominant, fast, and easily far enough to satisfy
+        the tug thresholds. The swipe's own refractory does not cover this
+        detector, so the caller extends ours instead."""
+        self._refractory_until = max(self._refractory_until, until)
+        self._cancel_pending()
+
     def update(self, palm, hw, armed, now):
         """Returns 'minimize' once per deliberate push-then-land, else None."""
         self.active = False
@@ -967,6 +978,11 @@ class GestureController:
             self.last_swipe = (res, now)
             self._freeze_until = max(self._freeze_until, now + 0.30)
             self._prev_palm = None
+            # The natural exit from a swipe is dropping the arm with the
+            # hand still loosely closed — a downward stroke the flick
+            # detector would happily read as "minimise". Cross-refractory:
+            # a fresh swipe buys the flick detector a second of silence.
+            self._flick.hold_off(now + 1.0)
 
     def _handle_flick(self, pts, now):
         """Fist-armed downward snap = minimize the active window. Never fires

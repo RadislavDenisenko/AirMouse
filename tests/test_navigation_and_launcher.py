@@ -367,6 +367,22 @@ check("held fist swipes again without re-clenching (back-back-back)",
       second_n == 2, f"n={second_n}")
 check("fist still armed after two strokes", c_r._fist.is_down)
 
+# A swipe's follow-through must not minimise. The fist stays armed while
+# held (by design, for back-back-back), and the natural exit after a swipe
+# is dropping the arm with the hand still loosely closed — a downward-
+# dominant stroke fast and long enough to satisfy the flick thresholds. A
+# fresh swipe therefore buys the flick detector a moment of silence.
+m_x = NullMouse()
+c_x = GestureController(m_x)
+t = arm_then(c_x, m_x, [(560 - 45 * i, 240) for i in range(7)])
+assert [e for e in m_x.events if e[0] == "forward"], m_x.events
+for i in range(1, 8):          # arm drop: fist still closed, fast, downward
+    t += DT
+    c_x.update(fist(290, 240 + 45 * i), FRAME, t)
+check("post-swipe arm drop with a closed hand does not minimize",
+      ("minimize",) not in m_x.events,
+      f"events={[e for e in m_x.events if e[0] != 'move']}")
+
 # navigation is gated behind attention
 m2 = NullMouse()
 c2 = GestureController(m2)

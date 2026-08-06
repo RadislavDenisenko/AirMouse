@@ -240,13 +240,26 @@ def _measure_fps(cap, n: int = 20) -> float:
     return good / dt if dt > 0 else 0.0
 
 
-def ensure_framerate(cap, min_fps: float = 20.0):
+def ensure_framerate(cap, min_fps: float = 20.0, want_fps: float = 30.0):
     """In dim light auto-exposure can stretch to >100ms/frame, tanking the
     camera to ~8fps (and adding motion blur). If that happens, force a short
     manual exposure (1/32s) + max gain so tracking stays at 30fps.
-    Returns (measured_fps, low_light_mode)."""
+    Returns (measured_fps, low_light_mode).
+
+    A camera pinned below 30 by its own control panel is a separate problem
+    and used to pass silently: anything over min_fps was accepted, so a
+    Logitech left at 24 fps just felt jagged with nothing said about it.
+    Every frame is a chance to move the pointer, so the shortfall is felt as
+    stutter rather than seen as a number. We re-ask for 30 once, and the
+    caller reports it if the camera still refuses."""
     fps = _measure_fps(cap)
     if fps >= min_fps:
+        if fps < want_fps - 2.0:
+            # Re-request the fast path. Some drivers only offer 30 under
+            # MJPG and quietly fall back to a slower YUY2 mode.
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            cap.set(cv2.CAP_PROP_FPS, want_fps)
+            fps = max(fps, _measure_fps(cap))
         return fps, False
     for _ in range(2):  # occasionally the driver renegotiates badly; retry once
         cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
@@ -682,6 +695,18 @@ def main():
                 return 1
         print(f"camera delivering {cam_fps:.1f} fps"
               + (" (low-light mode: manual exposure)" if low_light else ""))
+        # A camera capped below 30 by its own software is felt as a jagged,
+        # laggy pointer rather than recognised as a frame-rate problem, and
+        # the fix is in the webcam's control panel where nobody would think
+        # to look. Say so plainly, once, and carry on running.
+        if 0 < cam_fps < 27.0:
+            applog.dialog(
+                f"Your webcam is only delivering {cam_fps:.0f} frames per "
+                "second.\n\nAirMouse needs 30 for smooth pointer control — "
+                "below that the cursor feels jagged and gestures are harder "
+                "to land.\n\nOpen your webcam's own software (Logitech G HUB, "
+                "Camera Settings, etc.) and set the frame rate to 30 fps.",
+                title="AirMouse — camera is running slow", warning=True)
 
     tracker = HandTracker(MODEL_PATH)
     real_mouse = NullMouse() if args.no_mouse else Mouse()

@@ -95,11 +95,25 @@ POSES = {
     "spread":  {"ext": (1.0, 1.0, 1.0, 1.0), "thumb": "out", "spread": 1.0},
     # A pinching finger curls down so the thumb meets it out in front of the
     # palm. Since fingers now FOLD rather than just shorten, this sits higher
-    # than it used to: the same 0.45 would drop the tip onto the knuckle line.
-    "index":   {"ext": (0.62, 1.0, 1.0, 1.0), "thumb": "index"},
-    "middle":  {"ext": (1.0, 0.62, 1.0, 1.0), "thumb": "middle"},
-    "ring":    {"ext": (1.0, 1.0, 0.62, 1.0), "thumb": "ring"},
-    "brake":   {"ext": (1.0, 0.16, 0.16, 0.16), "thumb": "out"},
+    # than it used to: the same 0.45 would drop the tip onto the knuckle
+    # line, and a deeper 0.5 curl was tried and compressed the whole pinch
+    # into the corner above the thenar. The spread narrows because a
+    # pinching hand gathers its resting fingers.
+    # The index curls DEEPER than the other pinches, not shallower. Its
+    # column stands directly above the thumb's root, so a high contact
+    # forces the thumb near-vertical — parallel to the shaft — and the two
+    # amber strokes merge however they are seamed (tried at 0.62 and 0.70;
+    # both rendered as one mass). Only a LOW contact, down near the palm's
+    # midline, buys the thumb the horizontal travel that gives it its own
+    # ~37-degree axis, and a low contact needs a deep fold to get there.
+    "index":   {"ext": (0.50, 1.0, 1.0, 1.0), "thumb": "index", "spread": 0.2},
+    "middle":  {"ext": (1.0, 0.62, 1.0, 1.0), "thumb": "middle", "spread": 0.2},
+    "ring":    {"ext": (1.0, 1.0, 0.62, 1.0), "thumb": "ring", "spread": 0.2},
+    # The SAME curl depth as the fist, so the three folded fingers read as
+    # the fist's knuckle humps with index and thumb left out — one curl
+    # language across every step. At a deeper 0.16 each finger drew as a
+    # tall, open ribbon coil instead of a low fat hump.
+    "brake":   {"ext": (1.0, 0.24, 0.24, 0.24), "thumb": "out"},
     # Not fully folded: at zero the fingers vanish into the palm and the hand
     # reads as an empty box. A shallow curl still says "closed".
     "fist":    {"ext": (0.24, 0.24, 0.24, 0.24), "thumb": "in"},
@@ -181,7 +195,7 @@ class HandDiagram:
         return self.LEN * (0.86, 1.0, 0.94, 0.74)[i]
 
     def _finger_path(self, i, e, spread):
-        """Knuckle, mid-joint and fingertip for one extension value.
+        """Root, knee, bulge and fingertip for one extension value.
 
         A real finger closing does two things at once: the proximal segment
         drops toward the palm and the rest folds forward and back down over
@@ -200,20 +214,66 @@ class HandDiagram:
         up = ln * (0.30 + 0.70 * e ** 1.6)          # how high the knuckle goes
         fold = 1.0 - e                              # how far the tip comes back
         knee = (fx, self.base_y - up)
-        return ((fx, self.base_y + 22),
-                knee,
-                (fx + 7 * fold, knee[1] + ln * 0.62 * fold ** 1.3))
+        # A PINCHING finger folds TOWARD the thumb, not away from it. Folded
+        # to pinky-side, the fingertip retreated from the thumb, the thumb
+        # had to travel across the palm to reach it, and its capsule ran
+        # straight up the finger's own shaft — the two amber strokes merged
+        # into one long wand with a hooked tip. Mirrored, the digits meet
+        # tip-to-tip in mid-air above the palm; the seam the thumb carries
+        # (see draw) is what keeps them two capsules where they touch.
+        side = -1 if FINGERS[i] == self.target.get("thumb") else 1
+        if side < 0:
+            # A long straight reach: the tip has to survive the thumb's seam
+            # understroke eating ~12px around the contact and still show a
+            # whole capsule entering the ring from the upper-right, opposite
+            # the thumb. The old 21px reach left a nub the thumb swallowed.
+            #
+            # The INDEX is the exception, and it folds the OTHER WAY. It
+            # stands directly above the thumb's root, so any contact kept
+            # near its own column jams shaft, fold and thumb into a ~45px
+            # corridor — narrower than three 17-19px strokes can ever
+            # separate in — and the pinch rendered as one amber mass at
+            # every curl depth and reach tried toward the palm's midline
+            # (0.62/30, 0.62/52, 0.70/80, 0.50/46). So the index does what
+            # every flat OK-sign illustration does: it folds down-LEFT and
+            # meets the thumb in the open air beside the palm. Out there
+            # the two digits stand a clear band of background apart, the
+            # shaft keeps its column, and the contact ring floats free of
+            # everything grey.
+            reach = -90 if i == 0 else -34
+            tip = (fx + reach * fold, knee[1] + ln * 0.62 * fold)
+            bulge = ((knee[0] + tip[0]) / 2, (knee[1] + tip[1]) / 2)
+        else:
+            # A CURL comes back down over its own knuckle. It used to land
+            # 21px to pinky-side — halfway to the NEXT finger's dimple — so
+            # each curled finger leaned against the palm as a detached
+            # diagonal capsule with its own dimple sitting vacant beside it.
+            # Now the tip lands just beside its own dimple and the bulge
+            # point swings the stroke out sideways on the way down, so the
+            # smoothed path reads as a fold at the knuckle, not a stick.
+            tip_y = knee[1] + ln * 0.55 * fold ** 1.3
+            tip = (fx + 12 * fold, tip_y)
+            bulge = (fx + 30 * fold, knee[1] + 0.30 * (tip_y - knee[1]))
+        return ((fx, self.base_y + 22), knee, bulge, tip)
 
     def _thumb_target(self, where, ext):
         s = self.S
         if where == "out":
-            return self.cx - 108 * s, self.base_y - 34 * s
+            # Far enough past the thenar bulge to read as a whole digit.
+            # At -108 the palm swallowed all but a nub of it, which mattered
+            # most on the brake step, where "thumb stays free" is the copy.
+            return self.cx - 118 * s, self.base_y - 46 * s
         if where == "in":
             return self.cx - 60 * s, self.base_y - 26 * s
-        # meet the fingertip where it actually ends up, fold and all
+        # meet the fingertip where it actually ends up, fold and all. The
+        # thumb stops 8px short ON ITS OWN SIDE of the contact: for the
+        # middle and ring pinches it comes from the lower-left, for the
+        # index — which folds out past the palm's edge to meet it — the
+        # root is to the contact's lower-RIGHT, and stopping short on the
+        # left would carry the stroke through the fingertip it is touching.
         i = FINGERS.index(where)
-        tx, ty = self._finger_path(i, ext[i], self.cur["spread"])[2]
-        return tx - 8, ty + 8
+        tx, ty = self._finger_path(i, ext[i], self.cur["spread"])[3]
+        return tx + (8 if i == 0 else -8), ty + 8
 
     def set_pose(self, name, lit=(), motion=None):
         self.target = dict(POSES.get(name, POSES["spread"]))
@@ -265,24 +325,54 @@ class HandDiagram:
 
         s = self.S
         cx, base_y = self.cx, self.base_y
+        # ONE visual language on every step: a neutral grey hand, amber for
+        # whatever is active. The palm used to tint amber when all five
+        # digits were lit, but lerped down toward the background that tint
+        # landed on a skin tone — so the open-hand and fist steps drew an
+        # illustrative tan hand while the pinch steps drew a grey diagram,
+        # and side by side they read as two different designers. The palm
+        # stays grey; the lit digits alone carry the signal, whether that is
+        # one fingertip or all five.
+        #
+        # AND ONE ANATOMY. Involvement changes a digit's COLOUR and nothing
+        # else — same width, same caps, same length on every step. Unlit
+        # fingers used to blend into the palm's exact grey, so a hairline
+        # centre stroke and a bright tip dot were added to keep them
+        # separable — and those two marks turned every resting finger into a
+        # thin stick with a lollipop head, a different illustration from the
+        # solid capsules of the lit ones. Drawn a shade lighter than the
+        # palm, they need neither.
         skin = hex_lerp(DIM, BG, 0.34)
+        digit = hex_lerp(DIM, BG, 0.18)
         edge = hex_lerp(DIM, "#ffffff", 0.10)
-        # When the whole hand is the subject — every finger and the thumb —
-        # the palm lights with them. Left grey it made an orange comb on a
-        # grey blob, which reads as an oversight. Deriving it beats listing a
-        # "palm" pseudo-finger in each step: it can never drift out of sync.
-        # It lights well short of full accent, though: a 250px block of pure
-        # amber out-shouts the pill, the brackets and the Next button.
-        if self._lit >= {"thumb", *FINGERS}:
-            skin = hex_lerp(hot, BG, 0.42)
-            edge = hex_lerp(hot, "#ffffff", 0.2)
 
-        # THE PALM, as one organic silhouette rather than a box. Fingers are
-        # drawn over it in the same tone and started below the knuckle line,
-        # so the whole thing reads as a hand instead of rods on a rectangle.
-        # The bulge on the left is the thenar — the fleshy pad the thumb
-        # actually grows out of, and the thing whose absence made earlier
-        # passes look like sticks.
+        # FINGERS FIRST, PALM OVER THEM. Drawn the other way round, every
+        # stroke's rounded base cap sat visible on the palm's face, and the
+        # hand read as sausages laid on a stone. With the palm last, the
+        # silhouette occludes the bases and each digit emerges from behind
+        # the knuckle line. Only the FOLDED-BACK part of a curling finger
+        # comes later still, because a fingertip curling toward you passes
+        # in front of the palm, not behind it.
+        paths = [self._finger_path(i, self.cur["ext"][i], self.cur["spread"])
+                 for i in range(4)]
+        cols = [hot if name in self._lit else digit
+                for name in FINGERS]
+        for i in range(4):
+            root, knee, bulge, tip = paths[i]
+            # Tapered: a pinky drawn as thick as a middle finger is the last
+            # strong "this is a comb, not a hand" cue. The taper is anatomy,
+            # so it applies to lit and unlit alike.
+            cv.create_line(root[0], root[1], knee[0], knee[1],
+                           fill=cols[i], width=self.WIDTHS[i],
+                           capstyle=tk.ROUND)
+
+        tx, ty = self._thumb
+        tcol = hot if "thumb" in self._lit else digit
+
+        # THE PALM, as one organic silhouette rather than a box. The bulge
+        # on the left is the thenar — the fleshy pad the thumb actually
+        # grows out of, and the thing whose absence made earlier passes look
+        # like sticks.
         palm = (cx - 70 * s, base_y - 6 * s,      # index-side knuckle
                 cx - 20 * s, base_y - 14 * s,
                 cx + 34 * s, base_y - 12 * s,
@@ -296,44 +386,91 @@ class HandDiagram:
         cv.create_polygon(palm, smooth=True, splinesteps=24, fill=skin,
                           outline=edge, width=2)
 
-        # Knuckle creases go on the palm BEFORE the fingers. Drawn after, they
-        # land on top of the lit fingers and read as scuffs on the artwork.
+        # Knuckle creases sit on the palm's face, over the buried roots —
+        # but only under fingers that are actually extended. A curled
+        # finger's tip comes back down onto this exact spot, and drawing
+        # the crease beside it left every curl leaning against a vacant
+        # dimple: the finger owns its knuckle, same as when it stands in it.
         for i in range(4):
+            if self.cur["ext"][i] < 0.7:
+                continue
             kx = self._finger_x(i, self.cur["spread"])
             cv.create_arc(kx - 7, base_y + 3, kx + 7, base_y + 18,
                           start=20, extent=140, style=tk.ARC,
                           outline=hex_lerp(skin, BG, 0.22), width=2)
 
+        # the folded-back half of any curling finger, in front of the palm.
+        # The round cap it shares with the buried stroke makes the knee a
+        # seamless knuckle, and the tip dot marks lit fingertips only — on a
+        # resting finger it was half of the lollipop. Drawn SMOOTHED through
+        # the bulge point so a deep curl arcs over the knuckle and hooks
+        # back down, instead of breaking into two straight strokes.
         for i, name in enumerate(FINGERS):
-            root, knee, tip = self._finger_path(i, self.cur["ext"][i],
-                                                self.cur["spread"])
-            lit = name in self._lit
-            colour = hot if lit else skin
-            # Tapered: a pinky drawn as thick as a middle finger is the last
-            # strong "this is a comb, not a hand" cue.
-            wd = self.WIDTHS[i]
-            # One polyline with round joins, so the fold is a continuous form
-            # rather than two capsules meeting at a visible seam. It starts
-            # well inside the palm so the knuckle joint is never a gap.
-            cv.create_line(root[0], root[1], knee[0], knee[1], tip[0], tip[1],
-                           fill=colour, width=wd + 1 if lit else wd,
-                           capstyle=tk.ROUND, joinstyle=tk.ROUND)
-            if not lit:                    # quiet outline keeps them separable
-                cv.create_line(root[0], base_y + 2, knee[0], knee[1],
-                               tip[0], tip[1], fill=edge, width=1,
-                               capstyle=tk.ROUND, joinstyle=tk.ROUND)
-            cv.create_oval(tip[0] - 4, tip[1] - 4, tip[0] + 4, tip[1] + 4,
-                           fill=hex_lerp(colour, "#ffffff", 0.16), outline="")
+            root, knee, bulge, tip = paths[i]
+            if abs(tip[0] - knee[0]) + abs(tip[1] - knee[1]) > 2:
+                cv.create_line(knee[0], knee[1], bulge[0], bulge[1],
+                               tip[0], tip[1], fill=cols[i],
+                               width=self.WIDTHS[i], capstyle=tk.ROUND,
+                               joinstyle=tk.ROUND, smooth=True,
+                               splinesteps=12)
+            if name in self._lit:
+                cv.create_oval(tip[0] - 4, tip[1] - 4, tip[0] + 4, tip[1] + 4,
+                               fill=hex_lerp(cols[i], "#ffffff", 0.16),
+                               outline="")
 
-        # the thumb, growing out of the thenar rather than floating beside it
-        tx, ty = self._thumb
-        lit = "thumb" in self._lit
-        colour = hot if lit else skin
-        cv.create_line(cx - 62 * s, base_y + 62 * s, cx - 76 * s,
-                       base_y + 30 * s, tx, ty, fill=colour, width=19,
-                       capstyle=tk.ROUND, joinstyle=tk.ROUND, smooth=True)
-        cv.create_oval(tx - 6, ty - 6, tx + 6, ty + 6,
-                       fill=hex_lerp(colour, "#ffffff", 0.16), outline="")
+        # and the thumb, one stroke rooted INSIDE the thenar — the root
+        # endpoint sits a clear 10px within the palm boundary, so the round
+        # cap can never poke past the smoothed spline. Rooted ON the edge it
+        # did exactly that: in the pinch poses the cap terminated in empty
+        # space below-left of the palm, and a thumb whose base hangs outside
+        # the hand reads as a skewer through it, not a digit growing from
+        # the pad. On a pinch the stroke crosses IN FRONT of the palm,
+        # which is where a pinching thumb belongs — so it carries a SEAM, a
+        # slightly wider background-colour understroke (the cursor's own
+        # trick). Without it, thumb and pinching finger are two same-amber
+        # capsules abutting for most of their height, and they merged into
+        # one blob no geometry could pull apart at this scale. The seam
+        # exists ONLY for that: it runs from where the stroke clears the
+        # palm's top edge out to the tip, and only when the thumb is
+        # reaching for a finger. Run over the buried length — or drawn at
+        # all on the out/in poses, which cross nothing amber — it sliced a
+        # black diagonal notch out of the palm silhouette, a cracked hand
+        # on every step. Butt-capped, so nothing reaches back inside the
+        # silhouette the way a round cap's 12px overhang did.
+        # The root sits at -62, not -66: the pad's smoothed spline pulls a
+        # few px inside its control points, and at -66 the stroke's 9.5px
+        # cap poked past the pad's left edge and lay on the bare palm as a
+        # visible rounded terminus — a bar pressed onto the hand. At -62
+        # the whole cap is inside the spline's guaranteed interior.
+        rx, ry = cx - 62 * s, base_y + 34 * s
+        if self.target.get("thumb", "out") in FINGERS and ty < ry:
+            t0 = max(0.0, min(1.0, (ry - (base_y - 16 * s)) / (ry - ty)))
+            if t0 < 1.0:
+                cv.create_line(rx + (tx - rx) * t0, ry + (ty - ry) * t0,
+                               tx, ty, fill=BG, width=25)
+        cv.create_line(rx, ry, tx, ty, fill=tcol,
+                       width=19, capstyle=tk.ROUND)
+        # THE THENAR PAD, over the thumb's base. The stroke's rounded cap
+        # used to stop mid-palm — a stick pressed into the hand, with the
+        # palm outline running on behind it. The pad swallows the cap, so
+        # in every pose the thumb emerges from behind the flesh it grows
+        # out of in life. It sits just inside the silhouette so the palm's
+        # 2px outline is never overpainted. Drawn in the palm's exact grey
+        # it was invisible — flat palm, flat pad, nothing on screen said
+        # "pad" — so the amber still read as ending on a featureless face.
+        # One shade lighter and it becomes a raised bulge the thumb
+        # visibly grows out of, the same trick the knuckle creases use in
+        # the other direction.
+        pad = (cx - 78 * s, base_y + 14 * s,
+               cx - 52 * s, base_y + 10 * s,
+               cx - 40 * s, base_y + 32 * s,
+               cx - 48 * s, base_y + 56 * s,
+               cx - 74 * s, base_y + 58 * s)
+        cv.create_polygon(pad, smooth=True, splinesteps=16,
+                          fill=hex_lerp(skin, "#ffffff", 0.08), outline="")
+        if "thumb" in self._lit:
+            cv.create_oval(tx - 6, ty - 6, tx + 6, ty + 6,
+                           fill=hex_lerp(tcol, "#ffffff", 0.16), outline="")
 
         # Two capsules touching is ambiguous at a glance; a marked join is not.
         if self.target.get("thumb", "out") in FINGERS:
@@ -376,9 +513,14 @@ class HandDiagram:
             ax, ay = cx + dx * reach, cy + dy * reach
             # A dashed run from the EDGE of the hand out to the disc. Where
             # the hand fills the axis — up and down, where the fingers reach
-            # nearly to the ring — there is no honest room for one, and a
-            # 20px floating stub joined to nothing is worse than nothing.
-            near, far = 84, reach - 24
+            # ~114px one way and the palm ~114px the other — there is no
+            # honest room for one, and a 20px floating stub joined to
+            # nothing is worse than nothing. `near` is therefore the hand's
+            # actual extent PER AXIS: a uniform 84 let the vertical guides
+            # through the guard below, and their first dashes sat on the
+            # palm's face.
+            near = 120 if dx == 0 else 84
+            far = reach - 24
             if far - near > 16:
                 cv.create_line(cx + dx * near, cy + dy * near,
                                cx + dx * far, cy + dy * far,
@@ -465,19 +607,29 @@ class DemoStage:
             fn(cv, x + w / 2, y + h / 2 + 14, x, y, w, h, fonts)
 
     def _draw_anchor(self, cv, cx, cy, x, y, w, h, fonts):
-        """A ring closing onto a point: what engaging actually does. The
+        """A ring closing onto the pointer: what raising your hand does. The
         opening step otherwise had nothing to show, and an empty panel reads
-        as something that failed to load."""
+        as something that failed to load.
+
+        The subject is THE POINTER ITSELF, drawn small inside the target the
+        ring closes onto — the panel's eyebrow promises the pointer will find
+        your hand, so the picture has to contain a pointer. It used to show
+        an abstract dot captioned "anchor", a word from the implementation
+        that appears nowhere else in the walkthrough."""
         t = (self.level % 1.0)
         r = 54 - 26 * t
         cv.create_oval(cx - 30, cy - 30, cx + 30, cy + 30, outline=LINE,
                        width=2)
         cv.create_oval(cx - r, cy - r, cx + r, cy + r, width=2,
                        outline=hex_lerp(self.accent, PANEL, t), dash=(5, 4))
-        cv.create_oval(cx - 5, cy - 5, cx + 5, cy + 5, fill=self.accent,
-                       outline="")
-        cv.create_text(x + w - STAGE_PAD, cy, text="anchor", fill=DIM,
-                       font=fonts["tip"], anchor="e")
+        # a small pointer, the same glyph as the live one, sitting where the
+        # ring locks on — centred by its own visual mass, not its hotspot
+        px, py = cx - 6, cy - 9
+        m = 0.8
+        cv.create_polygon(px, py, px, py + 21 * m, px + 6 * m, py + 15 * m,
+                          px + 10 * m, py + 23 * m, px + 14 * m, py + 21 * m,
+                          px + 10 * m, py + 13 * m, px + 16 * m, py + 12 * m,
+                          fill="#ffffff", outline=CARD, width=2)
 
     def _draw_click(self, cv, cx, cy, x, y, w, h, fonts):
         """Press the button, then drag the window it turns into.
@@ -567,9 +719,8 @@ class DemoStage:
     def _draw_brake(self, cv, cx, cy, x, y, w, h, fonts):
         x0, x1 = x + STAGE_PAD, x + w - STAGE_PAD
         ry = cy - 44
-        cv.create_text(x0, ry, text="cursor speed", fill=DIM,
-                       font=fonts["tip"], anchor="w")
-        # the same treatment the volume readout gets — one job, one style
+        # the panel's eyebrow already says CURSOR SPEED, so the row carries
+        # only the readout — the same treatment the volume number gets
         cv.create_text(x1, ry, text=f"x{self.level:.2f}", fill=TEXT,
                        font=fonts["rail"], anchor="e")
         self._bar(cv, x0, x1, cy, self.level)
@@ -640,18 +791,25 @@ class DemoStage:
         # Easing all the way to nothing left the last thing in the whole
         # walkthrough as an empty box — which reads as a panel that failed.
         home = y + 110
-        rest = (bar_t + bar_b) / 2
+        # The docked chip sits a shade ABOVE the bar's centre line, leaving
+        # room under it for the running-app underline to sit on the bar's
+        # FACE. Centred, the underline landed within 2px of the bar's own
+        # bottom border and read as a rendering glitch outside it.
+        rest = (bar_t + bar_b) / 2 - 3
         t = max(0.0, (self.shown - DOCKED) / (1.0 - DOCKED))
         my = rest + (home - rest) * t
         hw, hh = 26 + 52 * t, 8 + 23 * t
         # Once it has docked the panel would otherwise be 120px of nothing
         # above a bar — on the LAST frame of the whole walkthrough. Leaving
         # the outline of where the window was makes the panel say "it went
-        # from here to there" instead.
+        # from here to there" instead. Drawn in CARD_SOFT it was darker than
+        # the panel it sat on and vanished; the ghost has to be one step
+        # LIGHTER than its ground to carry that story.
         if t < 0.92:
             cv.create_polygon(round_pts(cx - 78, home - 31, cx + 78,
                                         home + 31, R_CARD),
-                              smooth=True, fill="", outline=CARD_SOFT,
+                              smooth=True, fill="",
+                              outline=hex_lerp(LINE, DIM, 0.25),
                               width=2, dash=(5, 5))
         cv.create_polygon(round_pts(cx - hw, my - hh, cx + hw, my + hh,
                                     R_CHIP + 6 * t),
@@ -662,10 +820,11 @@ class DemoStage:
             cv.create_text(cx, my + 4, text="a window", fill=DIM,
                            font=fonts["tip"])
         else:
-            # docked — marked the way a running app is, so the step lands on
-            # "there it is" instead of on an empty panel
-            cv.create_line(cx - hw + 5, my + hh + 6, cx + hw - 5, my + hh + 6,
-                           fill=self.accent, width=2, capstyle=tk.ROUND)
+            # docked — marked the way Windows marks a running app: a short
+            # underline directly under the chip, INSIDE the bar's bounds,
+            # clear of both the chip above and the border below
+            cv.create_line(cx - 14, my + hh + 5, cx + 14, my + hh + 5,
+                           fill=self.accent, width=3, capstyle=tk.ROUND)
 
 
 # ----------------------------------------------------------------- steps ----
@@ -692,10 +851,14 @@ STEPS = [
      "pose": "spread", "motion": None, "auto_after": 5.0,
      "lit": ("index", "middle", "ring", "pinky", "thumb"),
      "big": "Raise your\nopen hand",
-     "sub": "That is it — you are connected. Move your hand\nand watch the pointer follow.",
-     "ok": "Connected — the pointer is yours",
+     # Instructional until it has actually happened: this text shows in the
+     # NOT-done state, and telling someone they are connected while the
+     # camera has seen nothing poisons every later "Done". The success claim
+     # lives in `ok`, which only appears once engagement is real.
+     "sub": "Hold it up for a moment — the pointer will\nstart following your hand.",
+     "ok": "Done — you are connected",
      "tip": "Keep your whole hand in view of the camera.",
-     "stage": "anchor", "stage_label": "the anchor locking on",
+     "stage": "anchor", "stage_label": "the pointer finds your hand",
      "done": lambda s: s["engaged"]},
 
     {"key": "click", "hand": "thumb + index", "name": "Click", "pose": "index", "motion": None,
@@ -713,16 +876,18 @@ STEPS = [
      "sub": "The same tap, one finger over. That opens the\nright-click menu.",
      "ok": "Done — that was a right click",
      "tip": "Your thumb belongs to whichever fingertip is nearest.",
-     "stage": "rclick", "stage_label": "what a right click does",
+     "stage": "rclick", "stage_label": "right-click menu",
      "done": lambda s: s["rclicks"] > 0},
 
     {"key": "volume", "hand": "thumb + ring", "name": "Volume", "pose": "ring", "motion": "updown",
      "lit": ("ring", "thumb"),
-     "big": "Pinch your\nring finger",
+     # Named THE WHOLE GESTURE: "pinch your ring finger" leaves out what to
+     # pinch it with, and the headline is the one line everybody reads.
+     "big": "Thumb to your\nring finger",
      "sub": "Keep pinching and move your hand up or down\nto set the volume.",
      "ok": "Done — you moved the volume",
      "tip": "Moving back down undoes it exactly. Nothing real changes here.",
-     "stage": "volume", "stage_label": "volume — pretend, nothing real changes",
+     "stage": "volume", "stage_label": "volume demo",
      "done": lambda s: s["volume"] != 0},
 
     {"key": "brake", "hand": "curl three fingers", "name": "Precision", "pose": "brake", "motion": None,
@@ -731,8 +896,13 @@ STEPS = [
      "sub": "The cursor slows down. Squeeze harder and it\nslows further.",
      "ok": "Done — the cursor is slowed",
      "tip": "Index and thumb stay free, so you can still click while slowed.",
-     "stage": "brake", "stage_label": "how much you are slowing the cursor",
-     "done": lambda s: s["brake"] > 0.5},
+     "stage": "brake", "stage_label": "cursor speed",
+     # 0.25, not a deep 0.5: the demo bar visibly slows at a moderate
+     # squeeze, and withholding "Done" past the point the screen already
+     # rewarded reads as the gesture half-working. Resting fingers still
+     # cannot fire it — entry needs the debounced brake shape held past the
+     # 0.15 onset before "brake" reports anything at all.
+     "done": lambda s: s["brake"] > 0.25},
 
     {"key": "scroll", "hand": "peace sign", "name": "Scroll", "pose": "peace", "motion": "updown",
      "lit": ("index", "middle"),
@@ -740,8 +910,12 @@ STEPS = [
      "sub": "Move your hand up or down away from where\nyou made it. Further = faster.",
      "ok": "Done — you are scrolling",
      "tip": "Come back toward the middle to slow down and stop.",
-     "stage": "scroll", "stage_label": "a list, scrolling",
-     "done": lambda s: s["scrolling"]},
+     "stage": "scroll", "stage_label": "a scrolling list",
+     # The pose alone is not the lesson — holding a peace sign enters scroll
+     # mode after 0.06s with the hand dead still, and the copy says "move
+     # your hand". Satisfied means at least one wheel notch actually fired;
+     # the 0.25hs dead zone keeps that a small deliberate offset, one try.
+     "done": lambda s: s["scrolling"] and s["wheel"] > 0},
 
     # Back and forward are taught one direction at a time, each with a single
     # arrow. Showing both at once meant neither read as an instruction — you
@@ -757,7 +931,7 @@ STEPS = [
      "sub": "A relaxed grab arms navigation. Swiping right\ngoes back a page.",
      "ok": "Done — you went back a page",
      "tip": "It does not need to be a tight fist — just closed.",
-     "stage": "swipe", "stage_label": "going back a page",
+     "stage": "swipe", "stage_label": "back a page",
      "done": lambda s: s["back"] != 0},
 
     {"key": "swipe_fwd", "hand": "grab, swipe left", "name": "Go forward",
@@ -767,7 +941,7 @@ STEPS = [
      "sub": "The other way goes forward again, back to the\npage you just left.",
      "ok": "Done — you went forward again",
      "tip": "Keep the fist closed through the whole stroke.",
-     "stage": "swipe", "stage_label": "going forward again",
+     "stage": "swipe", "stage_label": "forward a page",
      "done": lambda s: s["forward"] != 0},
 
     {"key": "minimize", "hand": "grab, then pull down", "name": "Minimise", "pose": "fist", "motion": "down",
@@ -775,8 +949,8 @@ STEPS = [
      "big": "Grab, then pull\nstraight down",
      "sub": "A short, definite tug is enough. It fires as soon\nas the pull is clear.",
      "ok": "Done — the window is minimised",
-     "tip": "The closed fist is what stops a dropped arm minimising things.",
-     "stage": "minimize", "stage_label": "a window being minimised",
+     "tip": "The closed fist is what stops a dropped open hand minimising things.",
+     "stage": "minimize", "stage_label": "minimise preview",
      "done": lambda s: s["minimised"]},
 ]
 
@@ -802,18 +976,41 @@ class Tutorial:
         # and a longer swipe — so the walkthrough taught gestures that felt
         # nothing like the app it was introducing, and every tuning change
         # silently missed it.
+        # The fallback must never mask a divergence: a stale or hand-edited
+        # config.json raising KeyError inside make_controller used to drop
+        # this straight back to the bare constructor — old 1.2s high-five
+        # engage, a third of the speed — silently, discoverable only by feel.
+        # A bad USER config falls back to the SHIPPED config, through the
+        # same make_controller the tracker uses. Only if airmouse itself
+        # cannot import (in which case the camera is gone too, and gestures
+        # with it) do we build bare, and even then the load-bearing engage
+        # and speed values come from DEFAULT_CONFIG, not the constructor.
+        from config_defaults import DEFAULT_CONFIG
         try:
             from airmouse import make_controller
-            self.ctrl = make_controller(self.mouse, cfg)
         except Exception:
-            self.ctrl = GestureController(self.mouse)
+            make_controller = None
+        if make_controller is None:
+            self.ctrl = GestureController(
+                self.mouse,
+                sensitivity=DEFAULT_CONFIG["sensitivity"],
+                engage_hold_s=DEFAULT_CONFIG["engage_hold_s"],
+                engage_spread_ratio=DEFAULT_CONFIG["engage_spread_ratio"])
+        else:
+            try:
+                self.ctrl = make_controller(self.mouse, cfg)
+            except Exception:
+                self.ctrl = make_controller(self.mouse, DEFAULT_CONFIG)
         self.roles = RoleAssigner(dominant=cfg.get("dominant_hand", "right"))
         self.diagram = HandDiagram(self.accent)
         self.stage = DemoStage(self.accent)
         self._photo = None
         self._seen = self._blank_counts()
 
-        self.cur = [W * 0.52, H * 0.55]      # the fake pointer
+        # The pointer starts in the empty footer band, left of the buttons.
+        # Parked mid-screen it sat on the hand illustration; parked on Next
+        # it covered the one label it must never obscure.
+        self.cur = [W * 0.40, H * 0.88]      # the fake pointer
         self.press = 0.0
         self._drag_from = None
         self._done_at = None
@@ -830,7 +1027,7 @@ class Tutorial:
 
     @staticmethod
     def _blank_counts():
-        return {"clicks": 0, "rclicks": 0, "volume": 0, "nav": 0,
+        return {"clicks": 0, "rclicks": 0, "volume": 0, "wheel": 0, "nav": 0,
                 "back": 0, "forward": 0, "minimised": 0}
 
     # -- window ------------------------------------------------------------
@@ -1018,6 +1215,7 @@ class Tutorial:
                 self._seen["volume"] += e[1]
                 stage.level = min(1.0, max(0.0, stage.level + e[1] * 0.04))
             elif e[0] == "wheel":
+                self._seen["wheel"] += 1
                 stage.level += e[1] / 24.0
             elif e[0] in ("back", "forward"):
                 self._seen["nav"] += 1
@@ -1037,6 +1235,7 @@ class Tutorial:
                 "brake": info.get("brake", 0.0),
                 "armed": bool(info.get("fist_armed")),
                 "scrolling": info.get("mode") == SCROLL,
+                "wheel": self._seen["wheel"],
                 "nav": self._seen["nav"],
                 "back": self._seen["back"],
                 "forward": self._seen["forward"],
@@ -1067,8 +1266,12 @@ class Tutorial:
                 info = self.ctrl.update(cursor, (w, h), now, attending=True,
                                         suspend=cursor is None and bool(hands))
                 self._pinch_bubble(frame, cursor, info)
+                # The cursor hand is whichever one RoleAssigner was built
+                # for — hard-coding "right" told left-handed users to raise
+                # the one hand that will never be given the cursor role.
+                hand = self.cfg.get("dominant_hand", "right")
                 self.cam_msg = ("" if cursor is not None else
-                                "Hold your right hand up where\nthe camera "
+                                f"Hold your {hand} hand up where\nthe camera "
                                 "can see it")
 
         if info is not None:
@@ -1231,17 +1434,19 @@ class Tutorial:
                                   outline="")
                 cv.create_line(30, cy - 15, 30, cy + 15, fill=self.accent,
                                width=3, capstyle=tk.ROUND)
-            if done:
-                fill, ring, num = OK, OK, BG
-            elif here:
+            # ONE ring, one colour, per badge. Active-and-satisfied used to
+            # draw the sage disc with an amber halo over it — two state
+            # colours fighting inside 20px, which read as a paint error.
+            # While you are ON a step the amber treatment wins (the tick
+            # still shows, inside it); sage takes over once you move on.
+            if here:
                 fill, ring, num = self.accent, self.accent, BG
+            elif done:
+                fill, ring, num = OK, OK, BG
             else:
                 fill, ring, num = SIDEBAR, LINE, DIM
             cv.create_oval(35, cy - 11, 57, cy + 11, fill=fill, outline=ring,
                            width=2)
-            if here and done:                     # ticked, and still the one
-                cv.create_oval(31, cy - 15, 61, cy + 15, outline=self.accent,
-                               width=2)
             if done:
                 cv.create_line(41, cy, 45, cy + 5, 52, cy - 6, fill=BG,
                                width=2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
@@ -1343,10 +1548,14 @@ class Tutorial:
         # opposite of feedback.
         if not done:
             hint, tint = "try it, or skip ahead", DIM
-        elif after:
+        elif after and self._done_at is not None:
+            # only while the countdown is genuinely running: a REVISITED
+            # auto step is satisfied but has no timer, and "moving on…"
+            # with nothing moving reads as the screen having broken
             hint, tint = "moving on…", DIM
         else:
-            hint, tint = "Nice — press Next", OK
+            hint, tint = ("Nice — press Finish" if last
+                          else "Nice — press Next"), OK
         cv.create_text(x + w / 2, y - 18, text=hint, fill=tint,
                        font=F["count"])
 
