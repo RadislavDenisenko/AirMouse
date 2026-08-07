@@ -4,7 +4,7 @@
 Right hand drives the cursor, left hand launches apps, and nothing moves
 unless you're actually looking at the screen.
 
-> ### Status: beta (v0.9.0)
+> ### Status: beta (v3.8)
 > Usable day to day, but still in active development — gesture thresholds
 > are being tuned against real hands and defaults may move between
 > versions. See [Roadmap](#roadmap).

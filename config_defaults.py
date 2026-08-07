@@ -10,7 +10,7 @@ APP_NAME = "AirMouse"
 # thresholds are still being tuned against real hands and cursor magnetism
 # is unfinished. Bump to 1.0 when the feature list in the README is closed
 # out and the defaults have stopped moving.
-APP_VERSION = "0.9.0"
+APP_VERSION = "3.8"
 APP_STAGE = "beta"
 APP_TITLE = f"{APP_NAME} {APP_VERSION} {APP_STAGE}"
 
