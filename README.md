@@ -85,7 +85,7 @@ back, and `--tutorial` replays it directly.
 
 | Gesture | Action |
 | --- | --- |
-| Flat spread palm ("high five"), hold ~1.2 s | **Engage** — an anchor circle sized to your hand locks in |
+| Raised open hand, held a beat | **Engage** — an anchor circle sized to your hand locks in |
 | Move hand | **Move cursor** — speed is even across the circle by default |
 | Push past the rim | The circle **follows your hand**, so you can cross the whole screen |
 | Thumb + index, tap | **Left click** |
@@ -134,6 +134,16 @@ the finder announces itself the way an assistive tool would and **retries**
 until a window genuinely answers. Treating the first ask as sufficient is
 the difference between tab buttons working and silently never appearing.
 
+**The zoom lens.** From across a room the cursor is steerable but the screen
+is not readable — you can park the pointer on a button you can't actually
+read. While your hand is driving the cursor, slowing down blooms a rounded
+magnified window around the pointer (Windows' own Magnification API does the
+scaling, composited on the GPU); moving fast fades it out of the way,
+because speed means travel, not aiming. Squeezing the precision brake brings
+it up instantly — that's an explicit "I'm aiming". It's click-through, never
+steals focus, and only exists while a hand is pointing: a real mouse never
+sees it.
+
 Navigation is armed by finger *count*, not curl depth: a closed hand has no
 fingers extended, a peace sign has two, pointing has one. That's what lets a
 comfortably loose grab arm the gesture without the scroll pose ever
@@ -177,8 +187,8 @@ hand becomes the launcher and never drives the pointer.
 
 Press **B** in the preview window, or run **run_settings.bat**.
 
-Seven sections — Pointer, Scrolling, Gestures, Magnet, Launcher, Attention,
-Camera — with every control bound to a real key in `config.json`. Changes
+Eight sections — Pointer, Scrolling, Gestures, Magnet, Lens, Launcher,
+Attention, Camera — with every control bound to a real key in `config.json`. Changes
 apply immediately where the tracker supports it, and controls that only take
 effect at startup say so rather than pretending.
 
@@ -245,6 +255,7 @@ walkthrough.
 | `attention.py` | The "are you looking at the screen?" gate |
 | `one_euro.py` | One-Euro filter for landmark smoothing |
 | `mouse_input.py` | `SendInput` mouse, X-buttons, media keys |
+| `lens.py` | The speed-adaptive zoom lens (Magnification API) |
 | `magnet.py` | Target discovery and the sticky-cursor wrapper |
 | `launcher.py` / `app_index.py` | Finger-count launcher, installed-app discovery |
 | `settings_app.py` | Settings app |

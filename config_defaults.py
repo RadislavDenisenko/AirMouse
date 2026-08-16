@@ -127,6 +127,19 @@ DEFAULT_CONFIG = {
                "capture_radius_px": 40.0, "escape_px": 40.0,
                "refractory_s": 0.3, "include_text_fields": False,
                "use_msaa": True, "use_uia": True, "poll_hz": 12.0},
+    # Zoom lens: a rounded 4:3 window that follows the cursor and
+    # magnifies what is under it, for driving the pointer from across the
+    # room. Speed decides presence — slow down (you are aiming) and it
+    # blooms, flick (you are traveling) and it fades out of the way;
+    # squeezing the precision brake brings it on regardless. Zoom is how
+    # much bigger, size_frac the lens HEIGHT as a share of the monitor's
+    # short side (so a rotated monitor feels identical), and the two
+    # speeds (px/s on a 1440-short-side screen, scaled to the monitor)
+    # are where the bloom starts and where the lens is fully gone. Only
+    # shows while a hand is actually aiming the cursor — a real mouse,
+    # an armed fist or a volume pinch never see it.
+    "lens": {"enabled": True, "zoom": 2.5, "size_frac": 0.22,
+             "aim_speed": 90.0, "travel_speed": 650.0},
     "launcher": {"hold_s": 0.3, "cooldown_s": 1.0,
                  "commands": ["", "", "", ""],
                  "labels": ["", "", "", ""]},

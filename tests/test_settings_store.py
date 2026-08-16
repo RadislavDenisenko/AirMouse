@@ -116,10 +116,10 @@ controls = all_controls()
 check("every section has a name, intro and controls",
       all(s.get("name") and s.get("intro") and s.get("controls")
           for s in SECTIONS), f"n={len(SECTIONS)}")
-check("all seven sections are present",
+check("all eight sections are present",
       [s["name"] for s in SECTIONS] == ["Pointer", "Scrolling", "Gestures",
-                                        "Magnet", "Launcher", "Attention",
-                                        "Camera"],
+                                        "Magnet", "Lens", "Launcher",
+                                        "Attention", "Camera"],
       f"{[s['name'] for s in SECTIONS]}")
 
 # THE guard rail: the UI can never offer a setting that isn't a real key

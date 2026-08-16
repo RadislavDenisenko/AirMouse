@@ -30,6 +30,7 @@ from gestures import (GestureController, IDLE, ENGAGING, TRACKING, PINCHED,
                       hand_raised)
 from hand_roles import RoleAssigner
 from launcher import FingerLauncher, SLOT_LABELS
+from lens import LensWindow
 from magnet import MagnetMouse, TargetFinder, resolve_params
 from mouse_input import Mouse, NullMouse, get_cursor_pos
 
@@ -816,6 +817,13 @@ def main():
     controller = make_controller(real_mouse, cfg)
     paused = False
 
+    # Zoom lens: magnifies what's under the cursor while a hand drives it.
+    # Lives entirely on its own thread; the loop only feeds it two facts a
+    # frame (is a hand pointing, how squeezed is the brake) and it reads
+    # the cursor itself.
+    lens_win = LensWindow(cfg.get("lens", {})).start()
+    print("zoom lens " + ("ON" if lens_win.model.enabled else "off"))
+
     # Hand routing: cursor (dominant) hand -> controller; off hand ->
     # launcher. The off hand NEVER drives the pointer, so it works on its own,
     # and a lone hand is identified by a sustained handedness vote rather than
@@ -930,6 +938,21 @@ def main():
         info = controller.update(cursor_pts, (w, h), now, attending=attending,
                                  suspend=cursor_pts is None and bool(hand_list))
 
+        # The lens only exists while a hand is actually AIMING the cursor.
+        # The display state carries exactly that: TRACKING/PINCHED/RCLICK/
+        # BRAKING are pointing (clicks and drags keep it), while ARMED,
+        # VOLUME and SCROLL freeze or repurpose the cursor — a frozen
+        # cursor reads as perfect calm, so gating on mode==POINT alone
+        # bloomed the lens mid-fist and mid-volume. `suspended` covers the
+        # other frozen-cursor cases: the launcher hand up, or looking
+        # away. The brake amount rides along: a squeeze is an explicit
+        # "I'm aiming".
+        lens_win.set_state(
+            active=(not paused and not info.get("suspended")
+                    and info["state"] in (TRACKING, PINCHED, RCLICK,
+                                          BRAKING)),
+            brake=info.get("brake", 0.0))
+
         # Left-hand finger launcher — only while attending, only once the off
         # hand has been stably present past the role cooldown, and only while
         # that hand is actually RAISED. From a couple of metres back the
@@ -963,6 +986,7 @@ def main():
             magnet_finder.reach_px = fresh["reach_px"]
             magnet_finder.include_text_fields = fresh["include_text_fields"]
             controller.apply_brake_params(live_cfg.get("brake"))
+            lens_win.apply_params(live_cfg.get("lens"))
 
         if cursor_pts and info.get("mode") == POINT:
             # pinch lines: thumb-index (left click), thumb-middle (right)
@@ -1052,6 +1076,7 @@ def main():
     save_motion_settings(CONFIG_PATH, controller.sensitivity,
                          controller.edge_multiplier, controller.radius_scale,
                          controller.scroll_gain_notches_s)
+    lens_win.stop()
     if magnet_finder is not None:
         magnet_finder.stop()
     cap.release()

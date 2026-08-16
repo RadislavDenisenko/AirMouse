@@ -29,7 +29,7 @@ from paths import CONFIG_PATH, USER_DIR  # noqa: F401 (CONFIG_PATH re-exported)
 APP_DIR = USER_DIR
 
 # Keys the running tracker picks up without a restart.
-LIVE_PREFIXES = ("launcher.", "magnet.", "brake.")
+LIVE_PREFIXES = ("launcher.", "magnet.", "brake.", "lens.")
 
 
 # ------------------------------------------------------------ dotted paths ---
@@ -374,6 +374,37 @@ SECTIONS = (
              "key": "magnet.use_msaa", "advanced": True,
              "caption": "*Finds buttons inside apps*, not just window "
                         "buttons. Turn off if any app misbehaves."},
+        ),
+    },
+    {
+        "name": "Lens",
+        "intro": "A magnifier follows your cursor, so you can read what "
+                 "you're clicking from across the room. Slow down and it "
+                 "appears; move fast and it gets out of the way.",
+        "controls": (
+            {"kind": "toggle", "label": "Zoom lens",
+             "key": "lens.enabled",
+             "caption": "*Magnifies what's under the cursor* while your "
+                        "hand is driving it. Squeeze the precision brake "
+                        "to bring it up instantly."},
+            {"kind": "slider", "label": "Magnification", "key": "lens.zoom",
+             "lo": 1.5, "hi": 4.0, "fmt": "{:.2f}x",
+             "caption": "*How much bigger* things look inside the lens."},
+            {"kind": "slider", "label": "Lens size", "key": "lens.size_frac",
+             "lo": 0.12, "hi": 0.34, "fmt": "{:.0%}",
+             "caption": "*How big the lens is* — its height, as a share of "
+                        "your screen."},
+            {"kind": "slider", "label": "Appears below",
+             "key": "lens.aim_speed", "lo": 30.0, "hi": 300.0,
+             "fmt": "{:.0f}", "advanced": True,
+             "caption": "*Cursor speed that counts as aiming.* Raise it if "
+                        "the lens is shy; lower it if it pops up while "
+                        "you're still moving."},
+            {"kind": "slider", "label": "Gone above",
+             "key": "lens.travel_speed", "lo": 300.0, "hi": 1500.0,
+             "fmt": "{:.0f}", "advanced": True,
+             "caption": "*Cursor speed that counts as traveling* — past "
+                        "this the lens is fully hidden."},
         ),
     },
     {

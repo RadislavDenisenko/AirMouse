@@ -139,6 +139,7 @@ and accent when selected. No emoji anywhere in the UI.
 │  Scrolling│  The selected nav item's pill SLIDES to    │
 │  Gestures │  the new selection.                        │
 │  Magnet   │                                            │
+│  Lens     │                                            │
 │  Launcher │                                            │
 │  Attention│                                            │
 │  Camera   │                                            │

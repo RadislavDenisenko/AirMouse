@@ -1,7 +1,7 @@
 """AirMouse settings — the real app (DESIGN.md v2).
 
-Seven sections, one window: Pointer, Scrolling, Gestures, Magnet, Launcher,
-Attention, Camera. Every control is generated from the manifest in
+Eight sections, one window: Pointer, Scrolling, Gestures, Magnet, Lens,
+Launcher, Attention, Camera. Every control is generated from the manifest in
 settings_store.SECTIONS, so the UI can only ever offer settings that map to
 real config.json keys, and every write is atomic and preserves keys this app
 doesn't own (the tracker stores its calibration in the same file).
@@ -221,6 +221,9 @@ class SettingsApp:
                           style="arc", outline=c, width=2)
             cv.create_line(x - 6, y + 2, x - 6, y - 6, **k)
             cv.create_line(x + 6, y + 2, x + 6, y - 6, **k)
+        elif name == "Lens":
+            cv.create_oval(x - 7, y - 7, x + 3, y + 3, outline=c, width=2)
+            cv.create_line(x + 3, y + 3, x + 7, y + 7, **k)
         elif name == "Launcher":
             cv.create_line(x, y - 7, x - 5, y + 6, **k)
             cv.create_line(x, y - 7, x + 5, y + 6, **k)
