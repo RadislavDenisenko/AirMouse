@@ -138,8 +138,12 @@ DEFAULT_CONFIG = {
     # are where the bloom starts and where the lens is fully gone. Only
     # shows while a hand is actually aiming the cursor — a real mouse,
     # an armed fist or a volume pinch never see it.
+    # aim_speed started at 90, which treated the small corrective moves of
+    # actually using the lens as "traveling" — barely nudging the cursor
+    # dismissed the zoom. 180 keeps it up through gentle steering, and the
+    # wider gap to travel_speed makes the fade start later and softer.
     "lens": {"enabled": True, "zoom": 2.5, "size_frac": 0.22,
-             "aim_speed": 90.0, "travel_speed": 650.0},
+             "aim_speed": 180.0, "travel_speed": 950.0},
     "launcher": {"hold_s": 0.3, "cooldown_s": 1.0,
                  "commands": ["", "", "", ""],
                  "labels": ["", "", "", ""]},

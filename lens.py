@@ -88,7 +88,7 @@ class LensModel:
     ASPECT = 4.0 / 3.0    # labels are horizontal; a reading lens is wide
 
     def __init__(self, enabled=True, zoom=2.5, size_frac=0.22,
-                 aim_speed=90.0, travel_speed=650.0):
+                 aim_speed=180.0, travel_speed=950.0):
         self.enabled = bool(enabled)
         self.zoom = float(zoom)
         self.size_frac = float(size_frac)

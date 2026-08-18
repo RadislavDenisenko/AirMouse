@@ -209,7 +209,7 @@ check("zoom and size retune live", m.zoom == 4.0 and m.size_frac == 0.30)
 m.apply_params({"zoom": -3, "size_frac": 99, "aim_speed": "garbage",
                 "travel_speed": None, "unknown_key": True})
 check("junk values clamp or bounce instead of applying",
-      m.zoom >= 1.0 and m.size_frac <= 0.50 and m.aim_speed == 90.0,
+      m.zoom >= 1.0 and m.size_frac <= 0.50 and m.aim_speed == 180.0,
       f"zoom={m.zoom} frac={m.size_frac} aim={m.aim_speed}")
 
 m.apply_params({"aim_speed": 500.0, "travel_speed": 400.0})
