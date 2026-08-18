@@ -188,7 +188,14 @@ class LensModel:
             return None
         grown = self.SIZE_FLOOR + (1.0 - self.SIZE_FLOOR) * self.u
         h = int(short * self.size_frac * grown)
+        h -= h % 4
         w = int(min(h * self.ASPECT, 0.5 * mon_w))
+        w -= w % 4
+        # The % 4 quantisation is anti-flicker: while u breathes with hand
+        # jitter the raw size changes by a pixel nearly every frame, and
+        # each change is a full window resize (re-layout, re-rounding,
+        # border redraw). Stepping by 4px cuts the resizes to a quarter
+        # and is invisible at 60Hz.
         # The window rides the raw cursor; only the CONTENT centre is
         # smoothed, so the 2.5x-amplified hand tremor inside the lens
         # calms down without the lens itself lagging the pointer.
@@ -220,6 +227,7 @@ _SW_HIDE = 0
 _SW_SHOWNOACTIVATE = 4
 _HWND_TOPMOST = -1
 _SWP_NOACTIVATE = 0x0010
+_SWP_NOSIZE = 0x0001
 _SWP_NOMOVE = 0x0002
 _SWP_NOZORDER = 0x0004
 _MONITOR_DEFAULTTONEAREST = 2
@@ -362,9 +370,15 @@ class LensWindow:
         mag = ctypes.WinDLL("Magnification.dll")
         if not mag.MagInitialize():
             raise OSError("MagInitialize failed")
+        # Without this, Windows timers tick every ~15.6ms and sleep(1/60)
+        # lands on an uneven 15.6/31.2ms beat — video inside the lens
+        # visibly judders. 1ms resolution makes the 60Hz cadence real.
+        winmm = ctypes.WinDLL("winmm")
+        winmm.timeBeginPeriod(1)
         try:
             self._windows(user32, mag)
         finally:
+            winmm.timeEndPeriod(1)
             mag.MagUninitialize()
 
     def _windows(self, user32, mag):
@@ -432,7 +446,11 @@ class LensWindow:
 
         applied_zoom = 0.0
         applied_wh = (size0, size0)
+        applied_alpha = 255
+        applied_win = None
         shown = False
+        TICK = 1.0 / 60.0
+        next_tick = time.perf_counter()
 
         class MONITORINFO(ctypes.Structure):
             _fields_ = [("cbSize", wintypes.DWORD),
@@ -483,7 +501,7 @@ class LensWindow:
                 if shown:
                     user32.ShowWindow(hostp, _SW_HIDE)
                     shown = False
-                time.sleep(0.016)
+                next_tick = self._tick_wait(next_tick, TICK)
                 continue
 
             alpha, (w, h), win, src = frame
@@ -497,18 +515,45 @@ class LensWindow:
             if (w, h) != applied_wh:
                 user32.MoveWindow(child, 0, 0, w, h, False)
                 applied_wh = (w, h)
-            user32.SetLayeredWindowAttributes(hostp, 0, alpha, _LWA_ALPHA)
+            if alpha != applied_alpha:
+                user32.SetLayeredWindowAttributes(hostp, 0, alpha,
+                                                  _LWA_ALPHA)
+                applied_alpha = alpha
             mag.MagSetWindowSource(
                 child, gdi_rect(src[0], src[1], src[2], src[3]))
-            user32.SetWindowPos(hostp, _HWND_TOPMOST, win[0], win[1],
-                                w, h, _SWP_NOACTIVATE)
+            # Topmost is re-asserted every tick — tooltips appear exactly
+            # while the cursor is parked and must land UNDER the magnifier
+            # so it can enlarge them. But when nothing moved it is a pure
+            # z-order poke: repositioning a parked window every 16ms is
+            # needless churn that reads as shimmer.
+            if (win, (w, h)) != applied_win:
+                user32.SetWindowPos(hostp, _HWND_TOPMOST, win[0], win[1],
+                                    w, h, _SWP_NOACTIVATE)
+                applied_win = (win, (w, h))
+            else:
+                user32.SetWindowPos(hostp, _HWND_TOPMOST, 0, 0, 0, 0,
+                                    _SWP_NOACTIVATE | _SWP_NOMOVE
+                                    | _SWP_NOSIZE)
             if not shown:
                 user32.ShowWindow(hostp, _SW_SHOWNOACTIVATE)
                 shown = True
             user32.InvalidateRect(child, None, False)
-            time.sleep(0.016)
+            next_tick = self._tick_wait(next_tick, TICK)
 
         user32.DestroyWindow(hostp)
+
+    @staticmethod
+    def _tick_wait(next_tick, tick):
+        """Sleep to an ABSOLUTE 60Hz schedule. Sleeping a fixed 16ms per
+        loop drifts by the work done each tick and by timer granularity,
+        and an uneven capture cadence is exactly what reads as flicker in
+        magnified video."""
+        next_tick += tick
+        now = time.perf_counter()
+        if next_tick <= now:            # fell behind; don't spiral
+            return now
+        time.sleep(next_tick - now)
+        return next_tick
 
 
 

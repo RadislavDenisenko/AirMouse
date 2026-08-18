@@ -238,6 +238,52 @@ check("each running entry has a name and an .exe path",
       all(w.get("name") and w.get("path", "").lower().endswith(".exe")
           for w in wins), f"n={len(wins)}")
 
+# ========================= key-press slot bindings ===========================
+import mouse_input
+from mouse_input import parse_key_spec
+
+check("a single named key parses", parse_key_spec("esc") == [0x1B])
+check("letters resolve to their VK", parse_key_spec("w") == [0x57])
+check("a chord parses in press order",
+      parse_key_spec("ctrl+shift+t") == [0x11, 0x10, 0x54])
+check("F-keys parse", parse_key_spec("f5") == [0x74])
+check("media keys parse", parse_key_spec("playpause") == [0xB3])
+check("case and spaces don't matter",
+      parse_key_spec(" Ctrl + W ") == [0x11, 0x57])
+check("an unknown key parses to nothing", parse_key_spec("fnord") is None)
+check("an empty spec parses to nothing", parse_key_spec("") is None)
+check("a trailing plus is rejected", parse_key_spec("ctrl+") is None)
+
+
+class _KeyRecorder:
+    """Stands in for user32: records keybd_event calls instead of typing."""
+    def __init__(self):
+        self.events = []
+
+    def keybd_event(self, vk, scan, flags, extra):
+        self.events.append((vk, "up" if flags else "down"))
+
+
+real_user32 = mouse_input._user32
+rec = _KeyRecorder()
+mouse_input._user32 = rec
+try:
+    ok = mouse_input.press_keys("ctrl+w")
+    bad = mouse_input.press_keys("not+a+key")
+    dispatched = airmouse.run_launch_command("keys:esc")
+finally:
+    mouse_input._user32 = real_user32
+
+check("a chord holds the modifier while the key taps",
+      ok and rec.events[:4] == [(0x11, "down"), (0x57, "down"),
+                                (0x57, "up"), (0x11, "up")],
+      f"events={rec.events[:4]}")
+check("an unknown spec presses nothing at all",
+      bad is False and len(rec.events) == 6, f"n={len(rec.events)}")
+check("the launcher dispatches keys: commands to the keyboard",
+      dispatched is True and rec.events[4:] == [(0x1B, "down"), (0x1B, "up")],
+      f"tail={rec.events[4:]}")
+
 print()
 print("ALL PASS" if not failures else f"FAILED: {failures}")
 sys.exit(1 if failures else 0)

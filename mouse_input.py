@@ -64,6 +64,53 @@ def _keybd(vk: int):
     _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 
+# Named keys the launcher can press ("keys:esc", "keys:ctrl+w"). Letters
+# and digits resolve on their own (VK codes match their ASCII uppercase),
+# so this maps everything a name is needed for.
+KEY_VKS = {
+    "esc": 0x1B, "enter": 0x0D, "tab": 0x09, "space": 0x20,
+    "backspace": 0x08, "delete": 0x2E, "insert": 0x2D,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "win": 0x5B, "ctrl": 0x11, "shift": 0x10, "alt": 0x12,
+    "printscreen": 0x2C, "pause": 0x13,
+    "playpause": 0xB3, "nexttrack": 0xB0, "prevtrack": 0xB1,
+    "stopmedia": 0xB2, "mute": 0xAD, "volumeup": 0xAF, "volumedown": 0xAE,
+}
+KEY_VKS.update({f"f{n}": 0x70 + n - 1 for n in range(1, 25)})
+
+
+def parse_key_spec(spec):
+    """'ctrl+shift+t' -> [VK_CONTROL, VK_SHIFT, 0x54], or None if any part
+    is unknown. Order is press order; releases happen in reverse."""
+    parts = [p.strip().lower() for p in (spec or "").split("+")]
+    if not parts or any(not p for p in parts):
+        return None
+    vks = []
+    for p in parts:
+        if p in KEY_VKS:
+            vks.append(KEY_VKS[p])
+        elif len(p) == 1 and (p.isascii() and (p.isalpha() or p.isdigit())):
+            vks.append(ord(p.upper()))
+        else:
+            return None
+    return vks
+
+
+def press_keys(spec) -> bool:
+    """Press a key or chord for the finger launcher: hold each part in
+    order, release in reverse — 'ctrl+w' really is Ctrl held while W taps.
+    Returns False (pressing nothing) on a spec it doesn't understand."""
+    vks = parse_key_spec(spec)
+    if not vks:
+        return False
+    for vk in vks:
+        _user32.keybd_event(vk, 0, 0, 0)
+    for vk in reversed(vks):
+        _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    return True
+
+
 class Mouse:
     """Real mouse backend."""
 

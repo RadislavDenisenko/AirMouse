@@ -32,7 +32,7 @@ from hand_roles import RoleAssigner
 from launcher import FingerLauncher, SLOT_LABELS
 from lens import LensWindow
 from magnet import MagnetMouse, TargetFinder, resolve_params
-from mouse_input import Mouse, NullMouse, get_cursor_pos
+from mouse_input import Mouse, NullMouse, get_cursor_pos, press_keys
 
 from paths import (CONFIG_PATH, FACE_MODEL as FACE_MODEL_PATH, FROZEN,
                    HAND_MODEL as MODEL_PATH, SCREENSHOT_PATH, USER_DIR)
@@ -142,10 +142,17 @@ def make_controller(mouse, cfg: dict) -> GestureController:
 
 
 def run_launch_command(cmd: str) -> bool:
-    """Open a program/file/URL for the finger launcher. Best-effort; never
-    raises into the capture loop."""
+    """Open a program/file/URL — or press a key — for the finger launcher.
+    Best-effort; never raises into the capture loop."""
     if not cmd:
         return False
+    if cmd.startswith("keys:"):
+        # A slot bound to a key press ("keys:esc", "keys:ctrl+w") taps the
+        # key instead of launching anything.
+        ok = press_keys(cmd[5:])
+        if not ok:
+            print(f"launcher: unknown key binding {cmd!r}")
+        return ok
     import subprocess
     try:
         os.startfile(cmd)   # handles .exe, files, and steam:// style URLs

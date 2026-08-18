@@ -54,8 +54,8 @@ last = frames[-1]
 check("a still cursor blooms the lens", last is not None)
 check("...to full opacity", last is not None and last[0] == 255,
       f"alpha={last and last[0]}")
-FULL_H = int(1440 * 0.22)
-FULL_W = int(FULL_H * LensModel.ASPECT)
+FULL_H = int(1440 * 0.22) // 4 * 4
+FULL_W = int(FULL_H * LensModel.ASPECT) // 4 * 4
 check("...at full size, wider than tall (labels are horizontal)",
       last is not None and last[1] == (FULL_W, FULL_H),
       f"wh={last and last[1]}")
@@ -158,10 +158,10 @@ check("a lens bigger than the monitor pins to its origin, no crash",
 m = LensModel()
 small = (0, 0, 1280, 720)
 frames, _, _ = settle(m, (600.0, 300.0), 0.0, mon=small)
-sh = int(720 * 0.22)
+sh = int(720 * 0.22) // 4 * 4
 check("lens size follows the monitor's short side",
       frames[-1] is not None
-      and frames[-1][1] == (int(sh * LensModel.ASPECT), sh),
+      and frames[-1][1] == (int(sh * LensModel.ASPECT) // 4 * 4, sh),
       f"wh={frames[-1] and frames[-1][1]}")
 
 # his real second monitor: the same 1440p panel rotated must give the SAME

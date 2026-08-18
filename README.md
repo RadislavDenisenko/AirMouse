@@ -156,6 +156,11 @@ Hold up **1–4 fingers** on your other hand for ~0.3 s to launch something.
 It's the **count** that matters, not which fingers — two fingers means index
 plus middle, and any combination adding to the same count works.
 
+A slot doesn't have to launch an app: it can **press a key** instead. Bind
+Esc, a media key, or a combo like Ctrl+W from the slot picker's *Key press*
+tab — pick from the list, or just press the key you want while the picker
+is open and it appears at the top.
+
 The hand has to be **raised** — knuckles clearly above the wrist — before
 any counting happens. The camera can read fingers perfectly well on a hand
 resting on your knee from across a room, and without that gate, sitting

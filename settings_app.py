@@ -19,6 +19,7 @@ import threading
 import tkinter as tk
 
 import app_index
+import mouse_input
 import settings_store as store
 from config_defaults import APP_VERSION
 from settings_ui import (ACCENTS, DEFAULT_ACCENT, BG, PANEL, CARD, CARD_HOVER,
@@ -533,7 +534,37 @@ class SettingsApp:
         self._caption(cv, P + 40 + 4 * 34 - 6, ctrl["caption"])
 
     SOURCES = (("apps", "Installed apps"), ("presets", "Shortcuts"),
-               ("running", "Running now"))
+               ("running", "Running now"), ("keys", "Key press"))
+
+    # Curated key picks for the "Key press" source. Media keys can't be
+    # captured from a Tk window, so anything a keyboard's media row sends
+    # has to be on this list to be bindable.
+    KEY_CHOICES = (
+        ("Esc", "keys:esc", "closes menus and popups"),
+        ("Enter", "keys:enter", ""),
+        ("Space", "keys:space", "play/pause in most video players"),
+        ("Play / Pause", "keys:playpause", "the media key — works anywhere"),
+        ("Next track", "keys:nexttrack", ""),
+        ("Previous track", "keys:prevtrack", ""),
+        ("Mute", "keys:mute", ""),
+        ("Alt + F4", "keys:alt+f4", "closes the active window"),
+        ("Ctrl + W", "keys:ctrl+w", "closes the active tab"),
+        ("F5", "keys:f5", "refresh"),
+        ("Windows key", "keys:win", "opens the Start menu"),
+        ("Print screen", "keys:printscreen", ""),
+    )
+
+    # Tk keysyms -> the names mouse_input.parse_key_spec understands.
+    _KEYSYM_TO_NAME = {
+        "Escape": "esc", "Return": "enter", "BackSpace": "backspace",
+        "Prior": "pageup", "Next": "pagedown", "Delete": "delete",
+        "Home": "home", "End": "end", "Tab": "tab", "space": "space",
+        "Up": "up", "Down": "down", "Left": "left", "Right": "right",
+        "Insert": "insert", "Pause": "pause", "Print": "printscreen",
+    }
+    _MOD_KEYSYMS = {"Control_L", "Control_R", "Shift_L", "Shift_R",
+                    "Alt_L", "Alt_R", "Win_L", "Win_R", "Super_L",
+                    "Super_R", "Caps_Lock", "Num_Lock"}
 
     def _pick_for_slot(self, idx):
         """Modal picker with three sources — installed apps, curated
@@ -549,7 +580,7 @@ class SettingsApp:
         tk.Label(win, text=f"What should {SLOT_NAMES[idx]} launch?",
                  font=FONTS["card"], fg=TEXT, bg=BG).pack(anchor="w", padx=16,
                                                           pady=(14, 6))
-        state = {"source": "apps", "rows": []}
+        state = {"source": "apps", "rows": [], "captured": None}
 
         tabs = tk.Frame(win, bg=BG)
         tabs.pack(anchor="w", padx=16)
@@ -573,6 +604,9 @@ class SettingsApp:
                        "library opens even when Steam is already running.",
             "running": "Apps open right now. Binds the program itself, not "
                        "the window.",
+            "keys": "The slot will PRESS this key instead of launching "
+                    "anything. Pick one below — or just press the key (or "
+                    "combo) you want right now and it appears at the top.",
         }
 
         def entries():
@@ -585,6 +619,9 @@ class SettingsApp:
                 ql = q.lower()
                 return [(n, c, note) for (n, c, note) in app_index.PRESETS
                         if not ql or ql in n.lower()]
+            if src == "keys":
+                cap = [state["captured"]] if state["captured"] else []
+                return cap + list(self.KEY_CHOICES)
             wins = app_index.list_open_windows()
             items = app_index.search(wins, q) if q else wins
             return [(w["name"], w["path"], "") for w in items]
@@ -608,8 +645,52 @@ class SettingsApp:
                               fg=BG if key == src else TEXT)
             hint.configure(text=HINTS[src])
             query.delete(0, tk.END)
+            # In key mode the search box disappears: every keystroke IS
+            # the input, so there is nothing to type a search into.
+            if src == "keys":
+                query.pack_forget()
+                win.focus_set()
+            elif not query.winfo_ismapped():
+                query.pack(fill="x", padx=16, before=listbox)
             repopulate()
-            query.focus_set()
+            if src != "keys":
+                query.focus_set()
+
+        def capture_key(e):
+            """A real key pressed while the Key press tab is open becomes
+            the top row, already selected — press it, see it, bind it."""
+            if state["source"] != "keys":
+                return None
+            ks = e.keysym
+            if ks in self._MOD_KEYSYMS:
+                return "break"
+            name = self._KEYSYM_TO_NAME.get(ks)
+            if name is None:
+                low = ks.lower()
+                if len(ks) == 1 and (ks.isalpha() or ks.isdigit()):
+                    name = low
+                elif low in mouse_input.KEY_VKS:
+                    name = low       # F-keys arrive as "F5"
+                else:
+                    return "break"   # a key we can't re-send; ignore it
+            mods = []
+            if e.state & 0x0004:
+                mods.append("ctrl")
+            if e.state & 0x0001:
+                mods.append("shift")
+            if e.state & 0x20000:
+                mods.append("alt")
+            spec = "+".join(mods + [name])
+            pretty = " + ".join([m.capitalize() for m in mods]
+                                + [name.upper() if len(name) <= 3
+                                   else name.capitalize()])
+            state["captured"] = (pretty, "keys:" + spec, "what you pressed")
+            repopulate()
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(0)
+            return "break"
+
+        win.bind("<KeyPress>", capture_key)
 
         for key, text in self.SOURCES:
             b = tk.Button(tabs, text=text, relief="flat", bg=CARD, fg=TEXT,
