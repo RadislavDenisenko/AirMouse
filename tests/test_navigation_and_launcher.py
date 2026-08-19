@@ -1338,6 +1338,89 @@ check("with nothing of its own, the tug restores the desktop's newest",
       ok_fb and fb == [904], f"restored={fb}")
 
 
+# ==================== the deliberate-command filter ==========================
+# The launcher must tell a COMMAND (palm to the camera, fingers up, hand
+# still, away from the face) from a hand that is just living (scratching,
+# drinking, talking). count_hand's geometry is the BACK of a left hand —
+# mirroring it around the palm is the palm-to-camera version.
+from launcher import OffhandIntent, fingers_upright, palm_to_camera
+
+
+def mirror_x(pts, px):
+    return [(2 * px - x, y) for (x, y) in pts]
+
+
+back = count_hand(320, 240, ("index",))
+palm = mirror_x(back, 320)
+
+check("the scratching orientation (back of hand) is not a shown palm",
+      not palm_to_camera(back, is_left_hand=True))
+check("the same left hand mirrored IS a shown palm",
+      palm_to_camera(palm, is_left_hand=True))
+check("for a right launcher hand the orientations swap",
+      palm_to_camera(back, is_left_hand=False)
+      and not palm_to_camera(palm, is_left_hand=False))
+edge_on = [(320 + (x - 320) * 0.1, y) for (x, y) in palm]
+check("an edge-on hand is nobody's command",
+      not palm_to_camera(edge_on, is_left_hand=True)
+      and not palm_to_camera(edge_on, is_left_hand=False))
+
+check("a straight-up count reads as upright", fingers_upright(palm))
+tilted = list(palm)
+tilted[8] = (tilted[8][0] + 120, tilted[8][1])   # index leans hard sideways
+check("a leaning finger fails the whole hand", not fingers_upright(tilted))
+check("a fist has nothing upright about it",
+      not fingers_upright(synthetic_hand(320, 240, open_palm=False)))
+
+
+def run_intent(frames_pts, face_box=None, is_left=True):
+    """Feed poses at 30fps; return (final ok, final hint, intent)."""
+    it = OffhandIntent(is_left_hand=is_left)
+    ok = False
+    t = 0.0
+    for p in frames_pts:
+        t += DT
+        ok = it.update(p, t, face_box=face_box)
+    return ok, it.hint, it
+
+
+ok, hint, _ = run_intent([palm] * 15)
+check("a still, shown, upright hand is a command", ok and hint is None)
+
+moving = [mirror_x(count_hand(320 + 30 * i, 240, ("index",)), 320 + 30 * i)
+          for i in range(15)]
+ok, hint, _ = run_intent(moving)
+check("a moving hand is not a command", not ok)
+check("...and after a beat it coaches stillness",
+      hint == "hold your hand still", f"hint={hint!r}")
+
+ok, hint, _ = run_intent([back] * 15)
+check("the back of the hand is not a command", not ok)
+check("...and the coaching says to show the palm",
+      hint == "show your palm to the camera", f"hint={hint!r}")
+
+ok, hint, _ = run_intent([tilted] * 15)
+check("leaning fingers are not a command", not ok)
+check("...and the coaching says to point them up",
+      hint == "point your fingers straight up", f"hint={hint!r}")
+
+# at the face NOTHING happens: no command, and no nagging either
+face = (250, 140, 390, 300)          # box around the palm's position
+ok, hint, _ = run_intent([palm] * 20, face_box=face)
+check("a perfect pose AT THE FACE is ignored", not ok)
+check("...silently — you don't get coached mid-eye-rub", hint is None)
+
+near = (250 - 200, 140, 390 - 200, 300)   # face just left of the hand
+ok, hint, _ = run_intent([palm] * 20, face_box=(30, 500, 120, 560))
+check("a face far away doesn't suppress anything", ok)
+
+ok, hint, _ = run_intent([None] * 10)
+check("no hand, no opinion", not ok and hint is None)
+
+# a brief wrong pose is not coached — hints wait for a persistent attempt
+ok, hint, _ = run_intent([back] * 5)
+check("a passing wrong pose isn't nagged at", hint is None)
+
 print()
 print("ALL PASS" if not failures else f"FAILED: {failures}")
 sys.exit(1 if failures else 0)

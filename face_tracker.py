@@ -47,13 +47,14 @@ def eye_blink_score(blendshapes):
 
 class FaceSignals:
     """Parsed, cheap-to-carry face read for one frame."""
-    __slots__ = ("present", "pose", "blink", "ts_ms")
+    __slots__ = ("present", "pose", "blink", "ts_ms", "box")
 
-    def __init__(self, present, pose, blink, ts_ms):
+    def __init__(self, present, pose, blink, ts_ms, box=None):
         self.present = present      # bool
         self.pose = pose            # (yaw, pitch, roll) deg or None
         self.blink = blink          # float [0,1] or None
         self.ts_ms = ts_ms
+        self.box = box              # (x0, y0, x1, y1) normalised, or None
 
 
 class FaceTracker:
@@ -84,15 +85,22 @@ class FaceTracker:
 
     def _on_result(self, result, output_image, timestamp_ms):
         present = bool(result.face_landmarks)
-        pose = blink = None
+        pose = blink = box = None
         if present:
             mats = result.facial_transformation_matrixes
             if mats:
                 pose = head_pose_deg(mats[0])
             bs = result.face_blendshapes
             blink = eye_blink_score(bs[0]) if bs else None
+            # Where the face IS, not just where it points: the launcher
+            # uses this to go quiet while a hand is at the face.
+            lms = result.face_landmarks[0]
+            xs = [l.x for l in lms]
+            ys = [l.y for l in lms]
+            box = (min(xs), min(ys), max(xs), max(ys))
         with self._lock:
-            self._signals = FaceSignals(present, pose, blink, timestamp_ms)
+            self._signals = FaceSignals(present, pose, blink, timestamp_ms,
+                                        box)
 
     def detect_async(self, frame_rgb):
         """Submit an RGB frame. Non-blocking; result arrives via callback."""

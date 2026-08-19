@@ -419,8 +419,9 @@ SECTIONS = (
     },
     {
         "name": "Launcher",
-        "intro": "Hold 1-4 fingers up on your LEFT hand to launch something. "
-                 "It is the COUNT that matters, not which fingers.",
+        "intro": "Hold 1-4 fingers up on your LEFT hand to launch something "
+                 "— palm to the camera, fingers up, held still. It is the "
+                 "COUNT that matters, not which fingers.",
         "controls": (
             {"kind": "slots", "label": "Your four slots",
              "caption": "*Both hands must be visible* — a lone hand always "

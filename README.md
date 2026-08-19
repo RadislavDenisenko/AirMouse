@@ -175,6 +175,18 @@ any counting happens. The camera can read fingers perfectly well on a hand
 resting on your knee from across a room, and without that gate, sitting
 still launched apps.
 
+Past that, the pose has to be a deliberate **show**: palm squarely to the
+camera, the counted fingers pointing straight up, and the hand held still.
+A person in front of this app scratches their face, drinks, leans on a
+fist, talks with their hands — all of it raises a hand with fingers out,
+and none of it looks like a shown palm held still. Scratching in
+particular shows the camera the *back* of your hand, which is the
+strongest tell there is. Anywhere near your face the launcher goes
+completely silent — no counting, no coaching — because touching your own
+face is never a command. And when you clearly *are* trying but one thing
+is off, the preview says which ("show your palm to the camera", "hold
+your hand still") instead of ignoring you.
+
 A fully open hand — thumb out too — is **neutral**, not slot 4. Raising an
 open hand is the most natural pose in front of this app, so it counts for
 nothing; tuck the thumb while the four fingers stay up to mean the count.

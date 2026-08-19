@@ -29,7 +29,7 @@ from gestures import (GestureController, IDLE, ENGAGING, TRACKING, PINCHED,
                       RCLICK, ARMED, SCROLL, VOLUME, BRAKING, POINT,
                       hand_raised)
 from hand_roles import RoleAssigner
-from launcher import FingerLauncher, SLOT_LABELS
+from launcher import FingerLauncher, OffhandIntent, SLOT_LABELS
 from lens import LensWindow
 from magnet import MagnetMouse, TargetFinder, resolve_params
 from mouse_input import Mouse, NullMouse, get_cursor_pos, press_keys
@@ -639,12 +639,18 @@ def draw_gesture_debug(frame, info, cfg):
         y += 16
 
 
-def draw_offhand_hud(frame, launcher, commands, labels=()):
-    """Bottom-left legend of the 4 left-hand launcher slots + hold progress."""
+def draw_offhand_hud(frame, launcher, commands, labels=(), hint=None):
+    """Bottom-left legend of the 4 left-hand launcher slots + hold progress.
+    `hint` is the intent filter's one-line coaching ("show your palm to
+    the camera") when someone is clearly trying and one thing is off."""
     h = frame.shape[0]
     x0, y0 = 12, h - 92
     cv2.putText(frame, "L-hand launcher", (x0, y0),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1, cv2.LINE_AA)
+    if hint:
+        cv2.putText(frame, hint, (x0, y0 + 17 + 4 * 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (80, 190, 235), 1,
+                    cv2.LINE_AA)
     for i, name in enumerate(SLOT_LABELS):
         yy = y0 + 17 + i * 15
         held = launcher.current == i
@@ -843,6 +849,11 @@ def main():
     lcfg = cfg.get("launcher", {})
     launcher = FingerLauncher(hold_s=lcfg.get("hold_s", 0.3),
                               cooldown_s=lcfg.get("cooldown_s", 1.0))
+    # The deliberate-command filter in front of the launcher: palm to the
+    # camera, fingers up, hand still, and never at the face. The off hand
+    # is the left one unless the roles are swapped.
+    offhand_intent = OffhandIntent(
+        is_left_hand=cfg.get("dominant_hand", "right") == "right")
     launcher_cmds = read_launcher_commands()
     launcher_labels = read_launcher_labels()
 
@@ -969,7 +980,19 @@ def main():
         # and counting those launched apps while the user sat still.
         off_ok = (attending and assigner.off_ready(now)
                   and off_pts is not None and hand_raised(off_pts, h))
-        fired = launcher.update(off_pts if off_ok else None, now)
+        # ...and past that, the pose must be a deliberate COMMAND: palm to
+        # the camera, fingers straight up, hand held still, nowhere near
+        # the face. Scratching, drinking, talking with your hands — a
+        # raised hand doing any of it stays a hand, not a launcher.
+        face_box_px = None
+        if face_tracker is not None:
+            sig = face_tracker.latest()
+            if sig.present and sig.box is not None:
+                face_box_px = (sig.box[0] * w, sig.box[1] * h,
+                               sig.box[2] * w, sig.box[3] * h)
+        intent_ok = offhand_intent.update(off_pts if off_ok else None, now,
+                                          face_box=face_box_px)
+        fired = launcher.update(off_pts if intent_ok else None, now)
         if fired is not None:
             cmds = read_launcher_commands()
             cmd = cmds[fired] if fired < len(cmds) else ""
@@ -1016,7 +1039,8 @@ def main():
         if dt > 0:
             fps_avg = fps_avg * 0.9 + (1.0 / dt) * 0.1
         draw_overlay(frame, info, fps_avg, low_light, paused, attention)
-        draw_offhand_hud(frame, launcher, launcher_cmds, launcher_labels)
+        draw_offhand_hud(frame, launcher, launcher_cmds, launcher_labels,
+                         hint=offhand_intent.hint)
         draw_magnet(frame, controller.mouse)
         if show_debug:
             draw_gesture_debug(frame, info, cfg)
