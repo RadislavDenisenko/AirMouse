@@ -136,8 +136,39 @@ check("the source is the lens divided by the zoom",
 win, src = lens_rects(10, 10, 400, 300, 2.5, MON)
 check("a corner cursor parks the lens at the corner",
       win[0] == 0 and win[1] == 0, f"win={win}")
-check("...and the source too — corner pixels stay visible",
+win, src = lens_rects(0, 0, 400, 300, 2.5, MON)
+check("...and at the exact corner, the corner pixel is the cursor pixel",
       src[0] == 0 and src[1] == 0, f"src={src}")
+
+# THE invariant: the magnified pixel under the real cursor is ALWAYS the
+# point the cursor is truly on — everywhere on screen, at any zoom and
+# size, on any monitor. This is what "clicks land where I'm aiming" is.
+worst = 0.0
+worst_at = None
+for mon in (MON, (2560, -400, 4000, 2160), (0, 0, 800, 600)):
+    ml, mt, mr, mb = mon
+    xs = (ml, ml + 10, (ml + mr) // 2, mr - 10, mr - 1)
+    ys = (mt, mt + 10, mt + 24, (mt + mb) // 2, mb - 10, mb - 1)
+    for cx in xs:
+        for cy in ys:
+            for zoom in (1.5, 2.4, 4.0):
+                for (w, h) in ((400, 300), (1916, 1436)):
+                    win, src = lens_rects(cx, cy, w, h, zoom, mon)
+                    qx = src[0] + (cx - win[0]) / zoom
+                    qy = src[1] + (cy - win[1]) / zoom
+                    err = max(abs(qx - cx), abs(qy - cy))
+                    if err > worst:
+                        worst, worst_at = err, (cx, cy, zoom, (w, h), mon)
+check("the point under the cursor IS the cursor, everywhere",
+      worst <= 1.0, f"worst={worst:.2f}px at {worst_at}")
+
+# the tab strip: a cursor 24px from the top with a big lens — exactly the
+# "had to aim above the X" report — must be truthful too (it was ~24px
+# off under independent centring)
+win, src = lens_rects(1280, 24, 1916, 1436, 2.4, MON)
+qy = src[1] + (24 - win[1]) / 2.4
+check("a tab close button is clickable where it appears",
+      abs(qy - 24) <= 1.0, f"under-cursor y={qy:.1f} vs 24")
 
 win, src = lens_rects(2555, 1435, 400, 300, 2.5, MON)
 check("the far corner clamps inside the monitor",

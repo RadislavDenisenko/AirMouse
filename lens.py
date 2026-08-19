@@ -52,22 +52,36 @@ def smoothstep(lo, hi, x):
 
 
 def lens_rects(cx, cy, w, h, zoom, mon):
-    """(window_rect, source_rect) for a w x h lens centred on the cursor.
+    """(window_rect, source_rect) for a w x h lens over the cursor.
 
-    Both rects clamp INDEPENDENTLY to the monitor: at an edge the window
-    parks and the magnified cursor slides off-centre toward it, so a
-    corner target (close buttons live there) stays visible rather than
-    the lens sliding off-screen or showing void. `mon` is (l, t, r, b) in
-    the same pixel space as the cursor."""
+    THE invariant of this function: the magnified pixel directly under
+    the real cursor is ALWAYS the point the cursor is truly on. The
+    window clamps to the monitor like any window; the source is then
+    DERIVED from it through the cursor — src = c - (c - win)/zoom per
+    axis — instead of being centred independently. Centring both
+    separately only agrees at the exact screen centre; everywhere else
+    (worst at edges, where tab close buttons live, and worse the bigger
+    the lens) the picture under the cursor came from a nearby-but-wrong
+    point, so clicks landed below where the eye aimed.
+
+    Because the window fits the monitor and the map contracts toward the
+    cursor, the derived source always fits the monitor too (up to
+    rounding). `mon` is (l, t, r, b) in the cursor's pixel space."""
     ml, mt, mr, mb = mon
-    w, h = max(2, int(w)), max(2, int(h))
+    # A lens larger than the monitor cannot both fit and stay truthful;
+    # shrink it to the monitor (the model never asks for more — this is
+    # a guard for direct callers).
+    w = max(2, min(int(w), mr - ml))
+    h = max(2, min(int(h), mb - mt))
     zoom = max(1.0, zoom)
     src_w = max(2, int(round(w / zoom)))
     src_h = max(2, int(round(h / zoom)))
     wl = int(_clamp(cx - w // 2, ml, max(ml, mr - w)))
     wt = int(_clamp(cy - h // 2, mt, max(mt, mb - h)))
-    sl = int(_clamp(cx - src_w // 2, ml, max(ml, mr - src_w)))
-    st = int(_clamp(cy - src_h // 2, mt, max(mt, mb - src_h)))
+    sl = int(round(cx - (cx - wl) / zoom))
+    st = int(round(cy - (cy - wt) / zoom))
+    sl = int(_clamp(sl, ml, max(ml, mr - src_w)))    # rounding guard only
+    st = int(_clamp(st, mt, max(mt, mb - src_h)))
     return (wl, wt, wl + w, wt + h), (sl, st, sl + src_w, st + src_h)
 
 
@@ -98,7 +112,6 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None          # (x, y, t)
-        self._src_c = None         # smoothed source centre
         self.apply_params({})      # clamp whatever the caller passed
 
     # -- live tuning ------------------------------------------------------
@@ -129,7 +142,6 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None
-        self._src_c = None
 
     # -- per-tick ---------------------------------------------------------
     def update(self, x, y, now, mon, active=True, brake=0.0):
@@ -184,7 +196,6 @@ class LensModel:
 
         alpha = int(round(255 * smoothstep(*self.ALPHA_BAND, self.u)))
         if alpha < self.HIDE_ALPHA:
-            self._src_c = None     # next bloom starts dead on the cursor
             return None
         grown = self.SIZE_FLOOR + (1.0 - self.SIZE_FLOOR) * self.u
         h = int(short * self.size_frac * grown)
@@ -198,17 +209,13 @@ class LensModel:
         # each change is a full window resize (re-layout, re-rounding,
         # border redraw). Stepping by 4px cuts the resizes to a quarter
         # and is invisible at 60Hz.
-        # The window rides the raw cursor; only the CONTENT centre is
-        # smoothed, so the 2.5x-amplified hand tremor inside the lens
-        # calms down without the lens itself lagging the pointer.
-        if self._src_c is None:
-            self._src_c = (float(x), float(y))
-        k = 1.0 - math.exp(-dt / 0.04)
-        self._src_c = (self._src_c[0] + (x - self._src_c[0]) * k,
-                       self._src_c[1] + (y - self._src_c[1]) * k)
-        win, _ = lens_rects(x, y, w, h, self.zoom, mon)
-        _, src = lens_rects(int(round(self._src_c[0])),
-                            int(round(self._src_c[1])), w, h, self.zoom, mon)
+        # Both rects come from the RAW cursor in one call, which is what
+        # keeps the picture under the cursor truthful. (An earlier version
+        # smoothed the source centre to calm magnified tremor — that shifted
+        # the content off the true click point while moving, which read as
+        # "my clicks land below where I'm aiming". The pointer is already
+        # One-Euro-smoothed upstream; truth wins.)
+        win, src = lens_rects(x, y, w, h, self.zoom, mon)
         return alpha, (w, h), win, src
 
 
