@@ -115,7 +115,7 @@ class LensModel:
                 return cur
         self.enabled = bool(params.get("enabled", self.enabled))
         self.zoom = num("zoom", self.zoom, 1.0, 8.0)
-        self.size_frac = num("size_frac", self.size_frac, 0.08, 0.50)
+        self.size_frac = num("size_frac", self.size_frac, 0.08, 1.0)
         self.aim_speed = num("aim_speed", self.aim_speed, 10.0, 2000.0)
         self.travel_speed = num("travel_speed", self.travel_speed,
                                 20.0, 6000.0)
@@ -189,7 +189,9 @@ class LensModel:
         grown = self.SIZE_FLOOR + (1.0 - self.SIZE_FLOOR) * self.u
         h = int(short * self.size_frac * grown)
         h -= h % 4
-        w = int(min(h * self.ASPECT, 0.5 * mon_w))
+        # Width follows the 4:3 shape until the monitor runs out — at the
+        # top of the size range the lens is simply as wide as the screen.
+        w = int(min(h * self.ASPECT, mon_w))
         w -= w % 4
         # The % 4 quantisation is anti-flicker: while u breathes with hand
         # jitter the raw size changes by a pixel nearly every frame, and

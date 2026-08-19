@@ -112,6 +112,33 @@ def press_keys(spec) -> bool:
     return True
 
 
+WS_EX_TOOLWINDOW = 0x00000080
+GWL_EXSTYLE = -20
+_ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
+                                wintypes.LPARAM)
+
+
+def _most_recent_iconic():
+    """The most recently used minimized top-level window, or 0.
+
+    EnumWindows walks in z-order, and iconic windows keep their z-order
+    slot — so the first visible, titled, non-tool iconic window it meets
+    is the one the user most recently had in front."""
+    found = wintypes.HWND(0)
+
+    def cb(hwnd, _l):
+        if (_user32.IsWindowVisible(hwnd) and _user32.IsIconic(hwnd)
+                and _user32.GetWindowTextLengthW(hwnd) > 0
+                and not (_user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+                         & WS_EX_TOOLWINDOW)):
+            found.value = hwnd
+            return False          # stop: first hit is the newest
+        return True
+
+    _user32.EnumWindows(_ENUM_PROC(cb), 0)
+    return found.value or 0
+
+
 class Mouse:
     """Real mouse backend."""
 
@@ -166,17 +193,22 @@ class Mouse:
             del self._minimized[:-8]    # only the recent few matter
 
     def restore_window(self) -> bool:
-        """Un-minimize the most recent window THIS app minimized.
-
-        Only windows the down-flick minimized are candidates — restoring
-        arbitrary taskbar windows would make the gesture unpredictable.
-        Skips entries the user has since closed or restored themselves."""
+        """Un-minimize a window: the most recent one THIS app minimized,
+        or — when its own memory is empty (fresh start, window minimized
+        by hand, taskbar click) — the most recently used minimized window
+        on the desktop. Without the fallback the gesture silently did
+        nothing in exactly the situation someone first tries it."""
         while self._minimized:
             hwnd = self._minimized.pop()
             if _user32.IsWindow(hwnd) and _user32.IsIconic(hwnd):
                 _user32.ShowWindow(hwnd, SW_RESTORE)
                 _user32.SetForegroundWindow(hwnd)
                 return True
+        hwnd = _most_recent_iconic()
+        if hwnd:
+            _user32.ShowWindow(hwnd, SW_RESTORE)
+            _user32.SetForegroundWindow(hwnd)
+            return True
         return False
 
     def center(self):

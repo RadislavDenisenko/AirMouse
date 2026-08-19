@@ -401,10 +401,9 @@ SECTIONS = (
              "lo": 1.5, "hi": 4.0, "fmt": "{:.2f}x",
              "caption": "*How much bigger* things look inside the lens."},
             {"kind": "slider", "label": "Lens size", "key": "lens.size_frac",
-             "lo": 0.12, "hi": 0.50, "fmt": "{:.0%}",
+             "lo": 0.12, "hi": 1.0, "fmt": "{:.0%}",
              "caption": "*How big the lens is* — its height, as a share of "
-                        "your screen. At the top it fills half the "
-                        "screen."},
+                        "your screen. At the top it IS the screen."},
             {"kind": "slider", "label": "Appears below",
              "key": "lens.aim_speed", "lo": 30.0, "hi": 300.0,
              "fmt": "{:.0f}", "advanced": True,

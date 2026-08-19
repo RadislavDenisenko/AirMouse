@@ -209,8 +209,23 @@ check("zoom and size retune live", m.zoom == 4.0 and m.size_frac == 0.30)
 m.apply_params({"zoom": -3, "size_frac": 99, "aim_speed": "garbage",
                 "travel_speed": None, "unknown_key": True})
 check("junk values clamp or bounce instead of applying",
-      m.zoom >= 1.0 and m.size_frac <= 0.50 and m.aim_speed == 180.0,
+      m.zoom >= 1.0 and m.size_frac <= 1.0 and m.aim_speed == 180.0,
       f"zoom={m.zoom} frac={m.size_frac} aim={m.aim_speed}")
+
+# at the very top of the size range the lens IS the screen height (within
+# the ease's asymptote + 4px quantisation), and the 4:3 width simply
+# saturates at the monitor's width
+m = LensModel(size_frac=1.0)
+frames, _, _ = settle(m, (1280.0, 700.0), 0.0)
+w, h = frames[-1][1] if frames[-1] else (0, 0)
+check("a maxed lens fills the screen height",
+      1432 <= h <= 1440 and w == int(min(h * LensModel.ASPECT,
+                                         2560)) // 4 * 4, f"wh=({w}, {h})")
+m = LensModel(size_frac=1.0)
+frames, _, _ = settle(m, (3000.0, 900.0), 0.0, mon=(2560, -400, 4000, 2160))
+w, h = frames[-1][1] if frames[-1] else (0, 0)
+check("...and on the portrait monitor it caps at the full width",
+      w == 1440 and 1432 <= h <= 1440, f"wh=({w}, {h})")
 
 m.apply_params({"aim_speed": 500.0, "travel_speed": 400.0})
 check("inverted thresholds degrade to a step, not a crash",

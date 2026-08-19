@@ -1204,11 +1204,13 @@ import mouse_input as _mi
 
 
 class _WinRecorder:
-    """user32 stand-in: three windows, all 'iconic' once minimised."""
+    """user32 stand-in: three windows, all 'iconic' once minimised, plus a
+    fake desktop for the EnumWindows fallback."""
     def __init__(self):
         self.fg = iter([111, 222, 333])
         self.shown = []
         self.closed = set()
+        self.desktop = []   # (hwnd, visible, title_len, exstyle) in z-order
 
     def GetForegroundWindow(self):
         return next(self.fg)
@@ -1224,6 +1226,22 @@ class _WinRecorder:
 
     def SetForegroundWindow(self, hwnd):
         self.shown.append((hwnd, "fg"))
+
+    def IsWindowVisible(self, hwnd):
+        return next((1 if v else 0 for (h, v, _t, _x) in self.desktop
+                     if h == hwnd), 0)
+
+    def GetWindowTextLengthW(self, hwnd):
+        return next((t for (h, _v, t, _x) in self.desktop if h == hwnd), 0)
+
+    def GetWindowLongPtrW(self, hwnd, _idx):
+        return next((x for (h, _v, _t, x) in self.desktop if h == hwnd), 0)
+
+    def EnumWindows(self, proc, lparam):
+        for (h, _v, _t, _x) in self.desktop:
+            if not proc(h, lparam):
+                break
+        return 1
 
 
 _real_u32 = _mi._user32
@@ -1246,7 +1264,26 @@ check("restore brings back the most recent minimised window, newest first",
       ok1 and ok2 and restores == [222, 111], f"restores={restores}")
 check("a window the user closed meanwhile is skipped, not crashed on",
       333 not in restores)
-check("an empty stack restores nothing and says so", ok3 is False)
+check("an empty stack with an empty desktop restores nothing", ok3 is False)
+
+# the fallback: an empty stack still restores the desktop's most recently
+# used minimised window — a fresh app start must not make the tug-up dead
+_rec2 = _WinRecorder()
+_rec2.desktop = [
+    (901, True, 5, _mi.WS_EX_TOOLWINDOW),   # tool window: never a target
+    (902, False, 5, 0),                     # invisible: skipped
+    (903, True, 0, 0),                      # untitled: skipped
+    (904, True, 9, 0),                      # the real one, nearest the top
+    (905, True, 9, 0),                      # older; must not be chosen
+]
+_mi._user32 = _rec2
+try:
+    ok_fb = _mi.Mouse().restore_window()
+finally:
+    _mi._user32 = _real_u32
+fb = [h for (h, how) in _rec2.shown if how == _mi.SW_RESTORE]
+check("with nothing of its own, the tug restores the desktop's newest",
+      ok_fb and fb == [904], f"restored={fb}")
 
 
 print()
