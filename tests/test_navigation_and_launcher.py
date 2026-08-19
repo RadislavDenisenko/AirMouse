@@ -1163,14 +1163,36 @@ check("clench, hold a beat, pull down -> minimise",
       ("minimize",) in m_dp.events,
       f"events={[e for e in m_dp.events if e[0] != 'move']}")
 
-# a clench that exists but is YOUNGER than the stroke also refuses
+# a clench made AT REST fires in one motion — no clench-then-wait needed
+# (the 0.15s pause shipped briefly and made the flicks feel dead)
 m_yc = NullMouse()
 c_yc = GestureController(m_yc)
 arm_then(c_yc, m_yc, [(320, 100 + 40 * i) for i in range(7)],
-         clench_frames=1)                # ~0.03s old: not a held fist
-check("a just-formed fist cannot fire the pull",
-      ("minimize",) not in m_yc.events,
+         clench_frames=1)                # clench and pull immediately
+check("a clench made at rest pulls in one motion",
+      ("minimize",) in m_yc.events,
       f"events={[e for e in m_yc.events if e[0] != 'move']}")
+
+# a fist formed mid-fall that then SETTLES becomes a legitimate fist —
+# the dirt washes off once the hand is still, and a pull then fires
+m_st = NullMouse()
+c_st = GestureController(m_st)
+t = 0.0
+for i in range(4):                       # falling open hand
+    t += DT
+    c_st.update(synthetic_hand(320, 60 + 40 * i), FRAME, t)
+for i in range(3):                       # closes while still falling
+    t += DT
+    c_st.update(fist(320, 220 + 40 * i), FRAME, t)
+for _ in range(6):                       # ...then settles, fist held
+    t += DT
+    c_st.update(fist(320, 340), FRAME, t)
+for i in range(1, 7):                    # now a deliberate pull down
+    t += DT
+    c_st.update(fist(320, 340 + 40 * i), FRAME, t)
+check("a mid-fall fist that settles can pull once it is still",
+      ("minimize",) in m_st.events,
+      f"events={[e for e in m_st.events if e[0] != 'move']}")
 
 # ===================== grab + tug UP -> restore ==============================
 m_up = NullMouse()
@@ -1198,6 +1220,36 @@ for i in range(7):                       # the hand comes straight back up
 check("the return upswing after a minimise does not restore",
       ("restore",) not in m_rt.events,
       f"events={[e for e in m_rt.events if e[0] != 'move']}")
+
+# ONE clench = ONE vertical action, however long the hand stays closed:
+# after a tug-up, lowering the still-clenched arm (even seconds later,
+# well past every refractory) is just an arm coming down — never a
+# minimise. Reopening and clenching again is what means "again".
+m_oc = NullMouse()
+c_oc = GestureController(m_oc)
+t = arm_then(c_oc, m_oc, [(320, 380 - 40 * i) for i in range(7)])
+assert ("restore",) in m_oc.events
+for _ in range(75):                      # fist held still ~2.5s: refractory over
+    t += DT
+    c_oc.update(fist(320, 140), FRAME, t)
+for i in range(1, 8):                    # now the arm comes down, still closed
+    t += DT
+    c_oc.update(fist(320, 140 + 40 * i), FRAME, t)
+check("lowering the same clench after a tug never minimises",
+      ("minimize",) not in m_oc.events,
+      f"events={[e for e in m_oc.events if e[0] != 'move']}")
+for _ in range(4):                       # open the hand...
+    t += DT
+    c_oc.update(synthetic_hand(320, 420), FRAME, t)
+for _ in range(3):                       # ...clench anew...
+    t += DT
+    c_oc.update(fist(320, 420), FRAME, t)
+for i in range(1, 7):                    # ...and THIS pull is a command again
+    t += DT
+    c_oc.update(fist(320, 420 + 40 * i), FRAME, t)
+check("reopen + fresh clench makes the pull a command again",
+      ("minimize",) in m_oc.events,
+      f"events={[e for e in m_oc.events if e[0] != 'move']}")
 
 # ===================== the restore stack (real backend) ======================
 import mouse_input as _mi

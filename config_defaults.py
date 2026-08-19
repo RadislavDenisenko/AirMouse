@@ -102,14 +102,18 @@ DEFAULT_CONFIG = {
     # what made it feel unreliable; the closed fist is what keeps a dropped
     # arm from triggering it. Distance and speed are lowered to match — a
     # short, definite tug is enough.
-    # `arm_age_s`: the clench must exist this long BEFORE the stroke
-    # starts. A lowered arm closes into a loose fist on its way down and
-    # then keeps falling — that armed-mid-motion hand must never minimise.
+    # What keeps a lowered arm from minimising is in the controller, not
+    # a threshold here: a fist formed while the hand was already moving
+    # fast is ignored until the hand settles, and one clench fires at
+    # most one vertical action. `arm_age_s` (an extra clench-then-wait
+    # pause before a stroke may fire) shipped at 0.15 and made the flicks
+    # feel dead — people clench and pull in ONE motion — so it defaults
+    # to off and stays only as an opt-in extra.
     "flick_down": {"enabled": True, "hand_widths": 0.6, "window_s": 0.40,
                    "min_speed_hw_s": 3.0, "refractory_s": 1.0,
                    "armed_frac": 0.6, "require_landing": False,
                    "settle_speed_hw_s": 1.5, "settle_timeout_s": 0.4,
-                   "arm_age_s": 0.15},
+                   "arm_age_s": 0.0},
     # Grab and tug UP: bring back the window the push most recently
     # minimised. Shares the push's thresholds — same effort both ways.
     "flick_up": {"enabled": True},

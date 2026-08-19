@@ -628,13 +628,16 @@ class FlickDownDetector:
     hold still" is not what the movement feels like. Set it back to True to
     restore the old behaviour.
 
-    CLENCH FIRST (`arm_age_s`): the fist must have been armed for this long
-    BEFORE the stroke began. Firing on the pull alone let a lowered arm
-    minimise a window: a hand relaxes into a loose curl on its way down,
-    arms mid-drop, and the remainder of the drop is a fast, downward,
-    armed stroke. Requiring the clench to predate the stroke separates
-    "clench, then pull" (deliberate) from "closes while falling"
-    (an arm going to a lap) — the one signal a dropped arm cannot fake.
+    CLENCH FIRST (`arm_age_s`, default 0): the clench must predate the
+    stroke window's start, plus this optional extra pause. The pause
+    shipped at 0.15s and made BOTH vertical flicks feel dead — people
+    clench and pull in one motion, not clench-wait-pull — so the real
+    anti-false-trigger work moved up into the controller: a fist formed
+    while the hand was already moving fast is "dirty" until the hand
+    settles (a hand closing on its way to a lap), and one clench may fire
+    at most one vertical action (lowering the arm after a tug-up is just
+    an arm coming down). The age gate stays for anyone who wants the
+    stricter feel back via the settings slider.
 
     Axis: fires on the dominant vertical (|dy| > |dx| in the chosen
     direction), complementing the swipe's |dx| >= |dy| — every direction
@@ -647,7 +650,7 @@ class FlickDownDetector:
                  settle_speed_hw_s: float = 1.5,
                  settle_timeout_s: float = 0.4,
                  require_landing: bool = False,
-                 arm_age_s: float = 0.15,
+                 arm_age_s: float = 0.0,
                  direction: int = 1, fires: str = "minimize"):
         self.require_landing = require_landing
         self.hand_widths = hand_widths
@@ -830,7 +833,7 @@ class GestureController:
                  flick_down_require_landing: bool = False,
                  flick_down_settle_speed_hw_s: float = 1.5,
                  flick_down_settle_timeout_s: float = 0.4,
-                 flick_down_arm_age_s: float = 0.15,
+                 flick_down_arm_age_s: float = 0.0,
                  flick_up_enabled: bool = True):
         self.mouse = mouse
         self.sensitivity = sensitivity
@@ -914,6 +917,11 @@ class GestureController:
             arm_age_s=flick_down_arm_age_s,
             direction=-1, fires="restore")
         self._fist_since = None     # when the current clench began
+        self._clench_dirty = False  # fist formed while already moving fast
+        self._vflick_used = False   # this clench already fired a vertical
+        self._raw_prev = None       # (palm px, t) for the palm-speed track
+        self._palm_speed_hw = 0.0   # hand speed in hand-widths/s
+        self._speed_hist = []       # (t, speed) trail for the dirty verdict
         self._left_owner = None     # None | 'pinch' (left button holder)
         self._right_down = False
         self._freeze_until = 0.0    # cursor frozen while now < this
@@ -1023,14 +1031,51 @@ class GestureController:
                 self._fist_lost_t0 = now
             elif now - self._fist_lost_t0 > 0.3:
                 self._fist.reset()  # hand truly gone -> disarm cleanly
-        # When did the current clench begin? The vertical flicks only fire
-        # if the fist predates the stroke, which is what stops a lowered
-        # arm (a hand that closes on its way down) from minimising things.
+        # Palm speed in hand-widths/s — the vertical flicks need to know
+        # whether a clench was made deliberately (hand near-still) or is
+        # just a hand relaxing closed on its way somewhere.
+        if pts:
+            _raw = palm_center(pts)
+            _hw = hand_width(pts)
+            if self._raw_prev is not None and _hw > 1e-6:
+                (_px, _py), _pt = self._raw_prev
+                _dt = max(1e-3, now - _pt)
+                self._palm_speed_hw = (math.hypot(_raw[0] - _px,
+                                                  _raw[1] - _py) / _hw / _dt)
+                # only MEASURED speeds enter the trail: the first frame
+                # after an appearance has nothing to measure against, and
+                # a phantom 0 would read as a moment of calm
+                self._speed_hist.append((now, self._palm_speed_hw))
+            self._raw_prev = (_raw, now)
+        else:
+            self._raw_prev = None
+            self._palm_speed_hw = 0.0
+            self._speed_hist = []
+        while self._speed_hist and now - self._speed_hist[0][0] > 0.25:
+            self._speed_hist.pop(0)
+        # A clench made while the hand was already moving fast is DIRTY —
+        # that is an arm being lowered, not a fist being used — and stays
+        # dirty until the hand settles. The verdict looks at the QUIETEST
+        # recent moment rather than the speed at the detection edge: the
+        # fist detector's debounce lands the edge a couple of frames into
+        # whatever motion follows the clench, so a clench-at-rest followed
+        # by an immediate pull reads as fast at the edge — but its rest
+        # frames are right there in the history. A falling hand has none.
+        # Opening the hand clears everything, including the one-vertical-
+        # action-per-clench flag.
         if self._fist.is_down:
             if self._fist_since is None:
                 self._fist_since = now
+                recent = [s for (t_, s) in self._speed_hist
+                          if now - t_ <= 0.20]
+                self._clench_dirty = (min(recent) > 1.5 if recent
+                                      else False)
+            elif self._clench_dirty and self._palm_speed_hw < 1.0:
+                self._clench_dirty = False
         else:
             self._fist_since = None
+            self._clench_dirty = False
+            self._vflick_used = False
 
         # Fist-armed swipe navigation + down-flick minimize run on the cursor
         # hand in any state (no need to engage), but only while looking at
@@ -1147,7 +1192,11 @@ class GestureController:
             return
         raw = palm_center(pts)
         hw = hand_width(pts)
-        armed = self._fist.is_down
+        # A dirty clench (formed mid-motion) or a clench that already
+        # fired its one vertical action reads as unarmed here — the
+        # detectors stay warm but nothing can fire.
+        armed = (self._fist.is_down and not self._clench_dirty
+                 and not self._vflick_used)
         since = self._fist_since
         res = down = up = None
         if self.flick_down_enabled:
@@ -1165,9 +1214,11 @@ class GestureController:
             self.last_swipe = (res, now)
             self._freeze_until = max(self._freeze_until, now + 0.30)
             self._prev_palm = None
-            # A stroke's return motion is its own mirror image: the arm
-            # comes back up after a push (and settles back down after a
-            # tug), which would fire the opposite gesture immediately.
+            # One clench, one vertical action: whatever the hand does next
+            # while still closed — settling back down after a tug, coming
+            # back up after a push, being lowered to a lap — is follow-
+            # through, not a second command. Reopen and clench to go again.
+            self._vflick_used = True
             other = self._flick_up if res == "minimize" else self._flick
             other.hold_off(now + self._flick.refractory_s)
 

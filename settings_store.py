@@ -340,9 +340,9 @@ SECTIONS = (
             {"kind": "slider", "label": "Clench first",
              "key": "flick_down.arm_age_s", "lo": 0.0, "hi": 0.5,
              "fmt": "{:.2f}s", "advanced": True,
-             "caption": "*How long the fist must exist before the pull "
-                        "starts.* Raise it if lowering your arm still "
-                        "minimises things."},
+             "caption": "*Extra pause between clench and pull* before a "
+                        "push or tug may fire. Zero — the default — lets "
+                        "them happen in one motion."},
         ),
     },
     {
