@@ -94,9 +94,10 @@ back, and `--tutorial` replays it directly.
 | Thumb + ring, held + move up/down | **Volume** — 1:1, so moving back down undoes it exactly |
 | Curl middle + ring + pinky | **Precision brake** — squeeze harder, move slower |
 | Shaka sign (thumb + pinky out), held a beat | **Reset** — the cursor jumps to the screen centre |
-| Closed hand (a relaxed grab is enough) | **Arms navigation** — the cursor holds still |
+| Closed hand (a real clench) | **Arms navigation** — the cursor holds still |
 | Grab + swipe left / right | **Forward / Back** |
-| Grab + push down, let it land | **Minimise** the active window |
+| Grab + push down | **Minimise** the active window |
+| Grab, hold a beat, tug up | **Restore** the window you last minimised |
 | Peace sign | **Scroll mode** — a zero point locks where the sign formed |
 | Peace sign held away from the zero | **Constant scroll** — farther = faster |
 | Move back toward the zero | The zero **jumps to your hand**, so reversing is instant |
@@ -149,6 +150,14 @@ fingers extended, a peace sign has two, pointing has one. That's what lets a
 comfortably loose grab arm the gesture without the scroll pose ever
 triggering it. Releasing is deliberately not gated the same way, so a
 motion-blurred frame mid-swipe can't disarm you.
+
+The vertical flicks additionally demand that the clench *predate* the
+stroke: an arm lowered to a lap closes into a loose fist on its way down
+and then keeps falling — fast, downward, and armed by the time it lands,
+which used to minimise whatever was focused. A fist that only formed
+mid-motion is a hand closing on its way somewhere, not a fist being used,
+so it can't fire. The tug-up restores only windows this app minimised —
+never arbitrary taskbar windows — newest first.
 
 ## Gestures — launcher hand
 

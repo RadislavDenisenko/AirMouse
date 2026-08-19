@@ -610,7 +610,11 @@ class SwipeDetector:
 
 
 class FlickDownDetector:
-    """Grab and push down -> minimize the active window.
+    """Grab and push down -> minimize; grab and pull up -> restore.
+
+    One detector class, two instances: `direction` +1 is the downward push
+    (fires "minimize"), -1 the upward tug (fires "restore" — bring back
+    the window the push most recently hid).
 
     v3.3: tuned for a SHORT deliberate push (~0.9 hand-widths, ~7 cm) at a
     moderate speed floor, using the same best-start metering fix as
@@ -621,13 +625,20 @@ class FlickDownDetector:
     wait for the hand to decelerate and settle before firing. That reliably
     stopped a dropped arm minimising a window — but it also made this the
     hardest gesture in the app to do deliberately, because "push and then
-    hold still" is not what the movement feels like. What stops an accidental
-    fire now is the pose: the fist must already be armed across the stroke,
-    and an arm dropped in frustration is an open hand. Set it back to True to
+    hold still" is not what the movement feels like. Set it back to True to
     restore the old behaviour.
 
-    Axis: fires on dy > |dx| (vertically dominant), complementing the
-    swipe's |dx| >= |dy| — every direction belongs to exactly one gesture."""
+    CLENCH FIRST (`arm_age_s`): the fist must have been armed for this long
+    BEFORE the stroke began. Firing on the pull alone let a lowered arm
+    minimise a window: a hand relaxes into a loose curl on its way down,
+    arms mid-drop, and the remainder of the drop is a fast, downward,
+    armed stroke. Requiring the clench to predate the stroke separates
+    "clench, then pull" (deliberate) from "closes while falling"
+    (an arm going to a lap) — the one signal a dropped arm cannot fake.
+
+    Axis: fires on the dominant vertical (|dy| > |dx| in the chosen
+    direction), complementing the swipe's |dx| >= |dy| — every direction
+    belongs to exactly one gesture."""
 
     def __init__(self, hand_widths: float = 0.9, window_s: float = 0.40,
                  min_speed_hw_s: float = 4.5,
@@ -635,7 +646,9 @@ class FlickDownDetector:
                  gap_tolerance_s: float = 0.15,
                  settle_speed_hw_s: float = 1.5,
                  settle_timeout_s: float = 0.4,
-                 require_landing: bool = False):
+                 require_landing: bool = False,
+                 arm_age_s: float = 0.15,
+                 direction: int = 1, fires: str = "minimize"):
         self.require_landing = require_landing
         self.hand_widths = hand_widths
         self.window_s = window_s
@@ -645,6 +658,9 @@ class FlickDownDetector:
         self.gap_tolerance_s = gap_tolerance_s
         self.settle_speed_hw_s = settle_speed_hw_s
         self.settle_timeout_s = settle_timeout_s
+        self.arm_age_s = arm_age_s
+        self.direction = 1 if direction >= 0 else -1
+        self.fires = fires
         self.reset()
 
     def reset(self):
@@ -669,8 +685,10 @@ class FlickDownDetector:
         self._refractory_until = max(self._refractory_until, until)
         self._cancel_pending()
 
-    def update(self, palm, hw, armed, now):
-        """Returns 'minimize' once per deliberate push-then-land, else None."""
+    def update(self, palm, hw, armed, now, armed_since=None):
+        """Returns `fires` once per deliberate clench-then-stroke, else
+        None. `armed_since` is when the current clench began — the clench
+        must predate the stroke by arm_age_s or nothing fires."""
         self.active = False
         if now < self._refractory_until:
             self._cancel_pending()
@@ -693,7 +711,7 @@ class FlickDownDetector:
                     if settle_speed <= self.settle_speed_hw_s:
                         self._cancel_pending()
                         self._refractory_until = now + self.refractory_s
-                        return "minimize"
+                        return self.fires
                 self._hist.append((now, x, y, hw, bool(armed)))
                 return None
 
@@ -720,8 +738,9 @@ class FlickDownDetector:
             span = now - t0
             if span <= 1e-3:
                 continue
-            dx, dy = x - x0, y - y0
-            if dy <= 0 or dy <= abs(dx):   # not downward-dominant
+            dx = x - x0
+            dy = (y - y0) * self.direction   # +ve = along OUR direction
+            if dy <= 0 or dy <= abs(dx):     # not dominant our way
                 continue
             sub = self._hist[i:]
             armed_share = sum(1 for h in sub if h[4]) / len(sub)
@@ -734,23 +753,27 @@ class FlickDownDetector:
                     and speed_hw_s >= 0.6 * self.min_speed_hw_s
                     and armed_share >= 0.5 * self.armed_frac):
                 self.active = True
+            # The clench must predate this stroke's start: a hand that
+            # armed mid-motion is a hand closing on its way somewhere,
+            # not a fist being used.
+            aged = (armed_since is not None
+                    and t0 - armed_since >= self.arm_age_s)
             if (travel_hw >= self.hand_widths
                     and speed_hw_s >= self.min_speed_hw_s
                     and armed_share >= self.armed_frac
-                    and self._hist[i][4]):
+                    and self._hist[i][4] and aged):
                 self.active = True
                 if self.require_landing:
                     self._pending_t0 = now      # wait for the hand to settle
                     break
-                # Fire the moment the pull is unambiguous. Waiting for the
-                # hand to decelerate and stop made this the hardest gesture
-                # in the app to perform on purpose; a closed fist plus a
-                # committed downward pull is already specific enough that an
-                # open-handed arm drop cannot reach it.
+                # Fire the moment the stroke is unambiguous. Waiting for
+                # the hand to decelerate and stop made this the hardest
+                # gesture in the app to perform on purpose; clench-first
+                # plus a committed stroke is already specific enough.
                 self._hist = []
                 self._refractory_until = now + self.refractory_s
                 self.metrics = best
-                return "minimize"
+                return self.fires
         self.metrics = best
         return None
 
@@ -772,7 +795,7 @@ class GestureController:
                  volume_up_ratio: float = 0.38,
                  volume_debounce_frames: int = 2,
                  volume_steps_per_hs: float = 8.0,
-                 fist_down_ratio: float = 1.10, fist_up_ratio: float = 1.50,
+                 fist_down_ratio: float = 1.05, fist_up_ratio: float = 1.50,
                  fist_debounce_frames: int = 2,
                  brake_enabled: bool = True, brake_onset: float = 0.08,
                  brake_full: float = 0.55, brake_min_scale: float = 0.15,
@@ -806,7 +829,9 @@ class GestureController:
                  flick_down_armed_frac: float = 0.6,
                  flick_down_require_landing: bool = False,
                  flick_down_settle_speed_hw_s: float = 1.5,
-                 flick_down_settle_timeout_s: float = 0.4):
+                 flick_down_settle_timeout_s: float = 0.4,
+                 flick_down_arm_age_s: float = 0.15,
+                 flick_up_enabled: bool = True):
         self.mouse = mouse
         self.sensitivity = sensitivity
         self.edge_multiplier = edge_multiplier
@@ -867,13 +892,28 @@ class GestureController:
         self._swipe_active = False
         self.last_swipe = None      # (direction, time) for the overlay
         self.flick_down_enabled = flick_down_enabled
+        self.flick_up_enabled = flick_up_enabled
         self._flick = FlickDownDetector(
             flick_down_hand_widths, flick_down_window_s,
             flick_down_min_speed_hw_s, flick_down_refractory_s,
             flick_down_armed_frac,
             settle_speed_hw_s=flick_down_settle_speed_hw_s,
             settle_timeout_s=flick_down_settle_timeout_s,
-            require_landing=flick_down_require_landing)
+            require_landing=flick_down_require_landing,
+            arm_age_s=flick_down_arm_age_s)
+        # The upward mirror shares every threshold with the push — the two
+        # motions should demand the same effort — and restores the window
+        # the push most recently minimised.
+        self._flick_up = FlickDownDetector(
+            flick_down_hand_widths, flick_down_window_s,
+            flick_down_min_speed_hw_s, flick_down_refractory_s,
+            flick_down_armed_frac,
+            settle_speed_hw_s=flick_down_settle_speed_hw_s,
+            settle_timeout_s=flick_down_settle_timeout_s,
+            require_landing=False,
+            arm_age_s=flick_down_arm_age_s,
+            direction=-1, fires="restore")
+        self._fist_since = None     # when the current clench began
         self._left_owner = None     # None | 'pinch' (left button holder)
         self._right_down = False
         self._freeze_until = 0.0    # cursor frozen while now < this
@@ -983,12 +1023,21 @@ class GestureController:
                 self._fist_lost_t0 = now
             elif now - self._fist_lost_t0 > 0.3:
                 self._fist.reset()  # hand truly gone -> disarm cleanly
+        # When did the current clench begin? The vertical flicks only fire
+        # if the fist predates the stroke, which is what stops a lowered
+        # arm (a hand that closes on its way down) from minimising things.
+        if self._fist.is_down:
+            if self._fist_since is None:
+                self._fist_since = now
+        else:
+            self._fist_since = None
 
         # Fist-armed swipe navigation + down-flick minimize run on the cursor
         # hand in any state (no need to engage), but only while looking at
         # the screen.
         self._swipe_active = False
         self._flick.active = False
+        self._flick_up.active = False
         if pts and attending:
             self._handle_swipe(pts, now)
             self._handle_flick(pts, now)
@@ -1085,25 +1134,42 @@ class GestureController:
             # detector would happily read as "minimise". Cross-refractory:
             # a fresh swipe buys the flick detector a second of silence.
             self._flick.hold_off(now + 1.0)
+            self._flick_up.hold_off(now + 1.0)
 
     def _handle_flick(self, pts, now):
-        """Fist-armed downward snap = minimize the active window. Never fires
-        while a button is held or in scroll mode."""
-        if (not self.flick_down_enabled or self._left_owner is not None
-                or self._right_down
+        """Fist-armed downward snap = minimize; upward tug = bring the
+        last minimized window back. Never fires while a button is held or
+        in scroll mode."""
+        if (self._left_owner is not None or self._right_down
                 or (self.state == TRACKING and self.mode == SCROLL)):
             self._flick.reset()
+            self._flick_up.reset()
             return
         raw = palm_center(pts)
         hw = hand_width(pts)
-        res = self._flick.update(raw, hw, self._fist.is_down, now)
-        if self._flick.active:
+        armed = self._fist.is_down
+        since = self._fist_since
+        res = down = up = None
+        if self.flick_down_enabled:
+            down = self._flick.update(raw, hw, armed, now, armed_since=since)
+        if self.flick_up_enabled:
+            up = self._flick_up.update(raw, hw, armed, now, armed_since=since)
+        res = down or up
+        if self._flick.active or self._flick_up.active:
             self._freeze_until = max(self._freeze_until, now + 0.08)
         if res == "minimize":
             self.mouse.minimize_window()
-            self.last_swipe = ("minimize", now)
+        elif res == "restore":
+            self.mouse.restore_window()
+        if res:
+            self.last_swipe = (res, now)
             self._freeze_until = max(self._freeze_until, now + 0.30)
             self._prev_palm = None
+            # A stroke's return motion is its own mirror image: the arm
+            # comes back up after a push (and settles back down after a
+            # tug), which would fire the opposite gesture immediately.
+            other = self._flick_up if res == "minimize" else self._flick
+            other.hold_off(now + self._flick.refractory_s)
 
     def _handle_idle(self, pts, frame_h, now):
         # Don't arm while the user is looking away — a raised palm off-screen
@@ -1504,6 +1570,7 @@ class GestureController:
         self._rpinch.reset()
         self._swipe.reset()
         self._flick.reset()
+        self._flick_up.reset()
         self._swipe_active = False
         self.state = IDLE
         self.mode = POINT

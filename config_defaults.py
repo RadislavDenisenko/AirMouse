@@ -57,7 +57,11 @@ DEFAULT_CONFIG = {
     # ~1.0 and comfortably clears 1.10, a resting hand does not. Reopening
     # past up_ratio releases, so the wide gap keeps a held fist stable
     # through motion blur.
-    "fist": {"down_ratio": 1.10, "up_ratio": 1.50, "debounce_frames": 2},
+    # 1.10 still let a hand relaxing into a loose curl count; a deliberate
+    # clench measures ~1.0, so 1.05 keeps the margin while demanding a
+    # real fist. (The clench-first age gate on the vertical flicks is the
+    # other half of "lowering my arm kept minimising windows".)
+    "fist": {"down_ratio": 1.05, "up_ratio": 1.50, "debounce_frames": 2},
     # Precision brake: squeeze the middle, ring and pinky to slow the cursor
     # for small targets. Proportional, not a switch — `onset` is the curl
     # depth (in hand-size units) where slowing begins and `full` where it
@@ -98,10 +102,17 @@ DEFAULT_CONFIG = {
     # what made it feel unreliable; the closed fist is what keeps a dropped
     # arm from triggering it. Distance and speed are lowered to match — a
     # short, definite tug is enough.
+    # `arm_age_s`: the clench must exist this long BEFORE the stroke
+    # starts. A lowered arm closes into a loose fist on its way down and
+    # then keeps falling — that armed-mid-motion hand must never minimise.
     "flick_down": {"enabled": True, "hand_widths": 0.6, "window_s": 0.40,
                    "min_speed_hw_s": 3.0, "refractory_s": 1.0,
                    "armed_frac": 0.6, "require_landing": False,
-                   "settle_speed_hw_s": 1.5, "settle_timeout_s": 0.4},
+                   "settle_speed_hw_s": 1.5, "settle_timeout_s": 0.4,
+                   "arm_age_s": 0.15},
+    # Grab and tug UP: bring back the window the push most recently
+    # minimised. Shares the push's thresholds — same effort both ways.
+    "flick_up": {"enabled": True},
     "volume": {"enabled": True, "steps_per_hs": 8.0, "down_ratio": 0.28,
                "up_ratio": 0.38, "debounce_frames": 2},
     # Rock-and-roll horns (index + pinky up, middle + ring curled) held for

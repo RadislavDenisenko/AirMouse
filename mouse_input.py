@@ -18,6 +18,7 @@ XBUTTON1 = 0x0001   # "Back"
 XBUTTON2 = 0x0002   # "Forward"
 
 SW_MINIMIZE = 6
+SW_RESTORE = 9
 
 # Media keys — the same ones a keyboard's volume buttons send.
 VK_VOLUME_DOWN = 0xAE
@@ -114,6 +115,9 @@ def press_keys(spec) -> bool:
 class Mouse:
     """Real mouse backend."""
 
+    def __init__(self):
+        self._minimized = []   # windows the down-flick minimized, oldest first
+
     def move(self, dx: int, dy: int):
         if dx or dy:
             _send(MOUSEEVENTF_MOVE, dx, dy)
@@ -153,10 +157,27 @@ class Mouse:
         self._xclick(XBUTTON2)
 
     def minimize_window(self):
-        """Minimize whatever window is currently in the foreground."""
+        """Minimize whatever window is currently in the foreground, and
+        remember it so the pull-up gesture can bring it back."""
         hwnd = _user32.GetForegroundWindow()
         if hwnd:
             _user32.ShowWindow(hwnd, SW_MINIMIZE)
+            self._minimized.append(hwnd)
+            del self._minimized[:-8]    # only the recent few matter
+
+    def restore_window(self) -> bool:
+        """Un-minimize the most recent window THIS app minimized.
+
+        Only windows the down-flick minimized are candidates — restoring
+        arbitrary taskbar windows would make the gesture unpredictable.
+        Skips entries the user has since closed or restored themselves."""
+        while self._minimized:
+            hwnd = self._minimized.pop()
+            if _user32.IsWindow(hwnd) and _user32.IsIconic(hwnd):
+                _user32.ShowWindow(hwnd, SW_RESTORE)
+                _user32.SetForegroundWindow(hwnd)
+                return True
+        return False
 
     def center(self):
         """Park the pointer in the middle of the primary screen.
@@ -219,6 +240,10 @@ class NullMouse:
 
     def minimize_window(self):
         self.events.append(("minimize",))
+
+    def restore_window(self) -> bool:
+        self.events.append(("restore",))
+        return True
 
     def center(self):
         self.events.append(("center",))

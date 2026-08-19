@@ -257,8 +257,8 @@ SECTIONS = (
                         "ring is *volume*. A closed fist *arms navigation*."},
             {"kind": "note", "label": "Armed navigation",
              "caption": "Grab first, then *swipe left or right* for "
-                        "forward/back, or *push down and let it land* to "
-                        "minimise."},
+                        "forward/back, *push down* to minimise, or *tug "
+                        "up* to bring the last minimised window back."},
             {"kind": "slider", "label": "Grab looseness",
              "key": "fist.down_ratio", "lo": 1.0, "hi": 1.6, "fmt": "{:.2f}",
              "caption": "*Higher = a lazier grab counts.* Only a closed hand "
@@ -333,6 +333,16 @@ SECTIONS = (
             {"kind": "toggle", "label": "Push down to minimise",
              "key": "flick_down.enabled",
              "caption": "*Turns the minimise gesture off* entirely."},
+            {"kind": "toggle", "label": "Tug up to restore",
+             "key": "flick_up.enabled",
+             "caption": "*Brings back the window you last minimised* — "
+                        "grab and pull up."},
+            {"kind": "slider", "label": "Clench first",
+             "key": "flick_down.arm_age_s", "lo": 0.0, "hi": 0.5,
+             "fmt": "{:.2f}s", "advanced": True,
+             "caption": "*How long the fist must exist before the pull "
+                        "starts.* Raise it if lowering your arm still "
+                        "minimises things."},
         ),
     },
     {
@@ -391,9 +401,10 @@ SECTIONS = (
              "lo": 1.5, "hi": 4.0, "fmt": "{:.2f}x",
              "caption": "*How much bigger* things look inside the lens."},
             {"kind": "slider", "label": "Lens size", "key": "lens.size_frac",
-             "lo": 0.12, "hi": 0.34, "fmt": "{:.0%}",
+             "lo": 0.12, "hi": 0.50, "fmt": "{:.0%}",
              "caption": "*How big the lens is* — its height, as a share of "
-                        "your screen."},
+                        "your screen. At the top it fills half the "
+                        "screen."},
             {"kind": "slider", "label": "Appears below",
              "key": "lens.aim_speed", "lo": 30.0, "hi": 300.0,
              "fmt": "{:.0f}", "advanced": True,

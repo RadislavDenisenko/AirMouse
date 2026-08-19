@@ -131,14 +131,18 @@ check("far-away hand: same swipe in hand-widths fires", res == "forward")
 # ================= controller-level FIST-ARMED navigation ====================
 # The fist must arm first; the detector needs the hysteresis switch to see an
 # open hand once (arming) before a clench registers, exactly like real use.
-def arm_then(ctrl, mouse, frames_xy, pose=fist, t0=0.0, attending=True):
-    """Show an open hand (arms the switch), clench, then run the stroke."""
+def arm_then(ctrl, mouse, frames_xy, pose=fist, t0=0.0, attending=True,
+             clench_frames=8):
+    """Show an open hand (arms the switch), clench AND HOLD it a beat,
+    then run the stroke. The hold matters: the vertical flicks demand the
+    clench predate the stroke (arm_age_s), which is what separates a
+    deliberate grab-and-pull from a hand closing on its way down."""
     t = t0
     for _ in range(3):                   # open hand: arms the hysteresis
         t += DT
         ctrl.update(synthetic_hand(frames_xy[0][0], frames_xy[0][1]),
                     FRAME, t, attending=attending)
-    for _ in range(3):                   # clench in place: fist commits
+    for _ in range(clench_frames):       # clench in place: fist commits
         t += DT
         ctrl.update(pose(frames_xy[0][0], frames_xy[0][1]), FRAME, t,
                     attending=attending)
@@ -927,16 +931,18 @@ lc4.update(None, t + DT)
 check("hand loss resets hold", lc4.current is None and lc4.progress == 0.0)
 
 # ================= grab + push down + land -> minimize =======================
-def run_flick(det, push, hold=4, armed=True):
-    """Feed a push then a landing (hand still, fist held); return the result."""
+def run_flick(det, push, hold=4, armed=True, armed_since=-1.0):
+    """Feed a push then a landing (hand still, fist held); return the
+    result. armed_since defaults to long-before-the-stroke so detector
+    tests exercise the stroke mechanics; the age gate has its own tests."""
     t2, res2 = 0.0, None
     for (x, y) in push:
         t2 += DT
-        r = det.update((x, y), HW, armed, t2)
+        r = det.update((x, y), HW, armed, t2, armed_since=armed_since)
         res2 = r or res2
     for _ in range(hold):
         t2 += DT
-        r = det.update(push[-1], HW, armed, t2)
+        r = det.update(push[-1], HW, armed, t2, armed_since=armed_since)
         res2 = r or res2
     return res2
 
@@ -961,7 +967,7 @@ fd_nl = FlickDownDetector()
 t, res = 0.0, None
 for i in range(20):                      # a pull that keeps travelling
     t += DT
-    r = fd_nl.update((320, 100 + 30 * i), HW, True, t)
+    r = fd_nl.update((320, 100 + 30 * i), HW, True, t, armed_since=-1.0)
     res = r or res
 check("a committed pull fires without waiting to land", res == "minimize")
 
@@ -970,7 +976,8 @@ fd_once = FlickDownDetector()
 t, fired = 0.0, 0
 for i in range(20):
     t += DT
-    if fd_once.update((320, 100 + 30 * i), HW, True, t) == "minimize":
+    if fd_once.update((320, 100 + 30 * i), HW, True, t,
+                      armed_since=-1.0) == "minimize":
         fired += 1
 check("a long pull still only minimises once", fired == 1, f"fired={fired}")
 
@@ -979,7 +986,7 @@ fd_land = FlickDownDetector(require_landing=True)
 t, res = 0.0, None
 for i in range(20):
     t += DT
-    r = fd_land.update((320, 100 + 30 * i), HW, True, t)
+    r = fd_land.update((320, 100 + 30 * i), HW, True, t, armed_since=-1.0)
     res = r or res
 check("require_landing=True still waits for the hand to settle", res is None)
 
@@ -1130,6 +1137,116 @@ for i in range(1, 6):
     c_off.update(ring_pinch(320, 240 - 15 * i), FRAME, t)
 check("volume disabled = no volume events",
       not [e for e in m_off.events if e[0] == "volume"] and not info["volume_down"])
+
+# ==================== the lowered arm must not minimise ======================
+# A hand relaxes into a loose fist ON ITS WAY DOWN: open for the first part
+# of the drop, closed for the rest, fast and downward-dominant throughout.
+# The clench arms mid-stroke, so the clench-first age gate must refuse it.
+m_la = NullMouse()
+c_la = GestureController(m_la)
+t = 0.0
+for i in range(4):                       # open hand, already falling
+    t += DT
+    c_la.update(synthetic_hand(320, 100 + 40 * i), FRAME, t)
+for i in range(4, 12):                   # closes mid-drop, keeps falling
+    t += DT
+    c_la.update(fist(320, 100 + 40 * i), FRAME, t)
+check("a hand that closes while falling does not minimise",
+      ("minimize",) not in m_la.events,
+      f"events={[e for e in m_la.events if e[0] != 'move']}")
+
+# ...but the same drop after a HELD clench is a deliberate pull and fires
+m_dp = NullMouse()
+c_dp = GestureController(m_dp)
+arm_then(c_dp, m_dp, [(320, 100 + 40 * i) for i in range(7)])
+check("clench, hold a beat, pull down -> minimise",
+      ("minimize",) in m_dp.events,
+      f"events={[e for e in m_dp.events if e[0] != 'move']}")
+
+# a clench that exists but is YOUNGER than the stroke also refuses
+m_yc = NullMouse()
+c_yc = GestureController(m_yc)
+arm_then(c_yc, m_yc, [(320, 100 + 40 * i) for i in range(7)],
+         clench_frames=1)                # ~0.03s old: not a held fist
+check("a just-formed fist cannot fire the pull",
+      ("minimize",) not in m_yc.events,
+      f"events={[e for e in m_yc.events if e[0] != 'move']}")
+
+# ===================== grab + tug UP -> restore ==============================
+m_up = NullMouse()
+c_up = GestureController(m_up)
+arm_then(c_up, m_up, [(320, 380 - 40 * i) for i in range(7)])
+check("clench, hold, tug up -> restore", ("restore",) in m_up.events,
+      f"events={[e for e in m_up.events if e[0] != 'move']}")
+check("...and the tug does not also minimise",
+      ("minimize",) not in m_up.events)
+
+m_ud = NullMouse()
+c_ud = GestureController(m_ud, flick_up_enabled=False)
+arm_then(c_ud, m_ud, [(320, 380 - 40 * i) for i in range(7)])
+check("tug up with the gesture disabled does nothing",
+      ("restore",) not in m_ud.events)
+
+# after a minimise, the arm's return upswing must NOT restore what it hid
+m_rt = NullMouse()
+c_rt = GestureController(m_rt)
+t = arm_then(c_rt, m_rt, [(320, 100 + 40 * i) for i in range(7)])
+assert ("minimize",) in m_rt.events
+for i in range(7):                       # the hand comes straight back up
+    t += DT
+    c_rt.update(fist(320, 340 - 40 * i), FRAME, t)
+check("the return upswing after a minimise does not restore",
+      ("restore",) not in m_rt.events,
+      f"events={[e for e in m_rt.events if e[0] != 'move']}")
+
+# ===================== the restore stack (real backend) ======================
+import mouse_input as _mi
+
+
+class _WinRecorder:
+    """user32 stand-in: three windows, all 'iconic' once minimised."""
+    def __init__(self):
+        self.fg = iter([111, 222, 333])
+        self.shown = []
+        self.closed = set()
+
+    def GetForegroundWindow(self):
+        return next(self.fg)
+
+    def ShowWindow(self, hwnd, how):
+        self.shown.append((hwnd, how))
+
+    def IsWindow(self, hwnd):
+        return 0 if hwnd in self.closed else 1
+
+    def IsIconic(self, hwnd):
+        return 1
+
+    def SetForegroundWindow(self, hwnd):
+        self.shown.append((hwnd, "fg"))
+
+
+_real_u32 = _mi._user32
+_rec = _WinRecorder()
+_mi._user32 = _rec
+try:
+    mm = _mi.Mouse()
+    mm.minimize_window()                 # 111
+    mm.minimize_window()                 # 222
+    mm.minimize_window()                 # 333
+    _rec.closed.add(333)                 # user closed the newest one
+    ok1 = mm.restore_window()
+    ok2 = mm.restore_window()
+    ok3 = mm.restore_window()
+finally:
+    _mi._user32 = _real_u32
+
+restores = [h for (h, how) in _rec.shown if how == _mi.SW_RESTORE]
+check("restore brings back the most recent minimised window, newest first",
+      ok1 and ok2 and restores == [222, 111], f"restores={restores}")
+check("a window the user closed meanwhile is skipped, not crashed on",
+      333 not in restores)
+check("an empty stack restores nothing and says so", ok3 is False)
 
 
 print()

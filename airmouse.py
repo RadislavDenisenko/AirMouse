@@ -138,6 +138,8 @@ def make_controller(mouse, cfg: dict) -> GestureController:
         flick_down_require_landing=fl.get("require_landing", False),
         flick_down_settle_speed_hw_s=fl.get("settle_speed_hw_s", 1.5),
         flick_down_settle_timeout_s=fl.get("settle_timeout_s", 0.4),
+        flick_down_arm_age_s=fl.get("arm_age_s", 0.15),
+        flick_up_enabled=cfg.get("flick_up", {}).get("enabled", True),
     )
 
 
