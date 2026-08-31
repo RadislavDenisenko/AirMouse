@@ -51,18 +51,22 @@ def smoothstep(lo, hi, x):
     return t * t * (3.0 - 2.0 * t)
 
 
-def lens_rects(cx, cy, w, h, zoom, mon):
-    """(window_rect, source_rect) for a w x h lens over the cursor.
+def lens_rects(cx, cy, w, h, zoom, mon, center=None):
+    """(window_rect, truthful_source_rect) for a w x h lens over the
+    cursor.
 
     THE invariant of this function: the magnified pixel directly under
     the real cursor is ALWAYS the point the cursor is truly on. The
-    window clamps to the monitor like any window; the source is then
-    DERIVED from it through the cursor — src = c - (c - win)/zoom per
-    axis — instead of being centred independently. Centring both
-    separately only agrees at the exact screen centre; everywhere else
-    (worst at edges, where tab close buttons live, and worse the bigger
-    the lens) the picture under the cursor came from a nearby-but-wrong
-    point, so clicks landed below where the eye aimed.
+    window sits at `center` (the cursor if not given), clamped to the
+    monitor like any window; the source is then DERIVED from wherever
+    the window actually is, through the cursor — src = c - (c - win)/zoom
+    per axis. That derivation holds for ANY window placement, which is
+    what lets the window lag on a soft spring while clicks stay honest.
+    Centring the source independently instead only agrees at the exact
+    screen centre; everywhere else (worst at edges, where tab close
+    buttons live, and worse the bigger the lens) the picture under the
+    cursor came from a nearby-but-wrong point, so clicks landed below
+    where the eye aimed.
 
     Because the window fits the monitor and the map contracts toward the
     cursor, the derived source always fits the monitor too (up to
@@ -74,10 +78,11 @@ def lens_rects(cx, cy, w, h, zoom, mon):
     w = max(2, min(int(w), mr - ml))
     h = max(2, min(int(h), mb - mt))
     zoom = max(1.0, zoom)
+    ccx, ccy = center if center is not None else (cx, cy)
     src_w = max(2, int(round(w / zoom)))
     src_h = max(2, int(round(h / zoom)))
-    wl = int(_clamp(cx - w // 2, ml, max(ml, mr - w)))
-    wt = int(_clamp(cy - h // 2, mt, max(mt, mb - h)))
+    wl = int(_clamp(ccx - w // 2, ml, max(ml, mr - w)))
+    wt = int(_clamp(ccy - h // 2, mt, max(mt, mb - h)))
     sl = int(round(cx - (cx - wl) / zoom))
     st = int(round(cy - (cy - wt) / zoom))
     sl = int(_clamp(sl, ml, max(ml, mr - src_w)))    # rounding guard only
@@ -100,6 +105,17 @@ class LensModel:
     HIDE_ALPHA = 12       # below this the window is simply hidden
     REF_H = 1440.0        # speeds are quoted at this short-side, in px
     ASPECT = 4.0 / 3.0    # labels are horizontal; a reading lens is wide
+    # Reading while moving: the window glides after the cursor on a soft
+    # spring, and the CONTENT holds still while the hand is in motion —
+    # like a page under a magnifying glass — then truth glides back in as
+    # the hand slows, well before a pinch can complete. The cursor is
+    # only honest when it needs to be: at click time.
+    WIN_TAU = 0.12        # window spring (s)
+    CURSOR_KEEP = 0.70    # cursor stays within this share of half-extent
+    TRUTH_TAU_LOCK = 0.05   # truth pull when the hand has settled
+    TRUTH_TAU_MOVE = 0.60   # content patience while the hand moves
+    LOCK_V = (40.0, 140.0)  # px/s (at REF_H): settled .. clearly moving
+    OFF_CAP_PX = 120.0      # the content may lag truth by at most this
 
     def __init__(self, enabled=True, zoom=2.5, size_frac=0.22,
                  aim_speed=180.0, travel_speed=950.0):
@@ -112,6 +128,9 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None          # (x, y, t)
+        self._win_c = None         # lazy window centre (floats)
+        self._src_off = (0.0, 0.0)  # content's lag behind truth (px)
+        self._prev_truth = None    # last truthful src origin
         self.apply_params({})      # clamp whatever the caller passed
 
     # -- live tuning ------------------------------------------------------
@@ -142,6 +161,9 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None
+        self._win_c = None
+        self._src_off = (0.0, 0.0)
+        self._prev_truth = None
 
     # -- per-tick ---------------------------------------------------------
     def update(self, x, y, now, mon, active=True, brake=0.0):
@@ -196,6 +218,9 @@ class LensModel:
 
         alpha = int(round(255 * smoothstep(*self.ALPHA_BAND, self.u)))
         if alpha < self.HIDE_ALPHA:
+            self._win_c = None
+            self._src_off = (0.0, 0.0)
+            self._prev_truth = None
             return None
         grown = self.SIZE_FLOOR + (1.0 - self.SIZE_FLOOR) * self.u
         h = int(short * self.size_frac * grown)
@@ -209,14 +234,53 @@ class LensModel:
         # each change is a full window resize (re-layout, re-rounding,
         # border redraw). Stepping by 4px cuts the resizes to a quarter
         # and is invisible at 60Hz.
-        # Both rects come from the RAW cursor in one call, which is what
-        # keeps the picture under the cursor truthful. (An earlier version
-        # smoothed the source centre to calm magnified tremor — that shifted
-        # the content off the true click point while moving, which read as
-        # "my clicks land below where I'm aiming". The pointer is already
-        # One-Euro-smoothed upstream; truth wins.)
-        win, src = lens_rects(x, y, w, h, self.zoom, mon)
-        return alpha, (w, h), win, src
+
+        # The window glides after the cursor on a soft spring instead of
+        # retracing every 30Hz camera step (which, magnified, read as
+        # jitter). The cursor is never allowed near the glass's edge —
+        # if the spring falls too far behind, it is dragged, not eased.
+        if self._win_c is None:
+            self._win_c = (float(x), float(y))
+        kw = 1.0 - math.exp(-dt / self.WIN_TAU)
+        wcx = self._win_c[0] + (x - self._win_c[0]) * kw
+        wcy = self._win_c[1] + (y - self._win_c[1]) * kw
+        keep_x = self.CURSOR_KEEP * w / 2.0
+        keep_y = self.CURSOR_KEEP * h / 2.0
+        wcx = _clamp(wcx, x - keep_x, x + keep_x)
+        wcy = _clamp(wcy, y - keep_y, y + keep_y)
+        self._win_c = (wcx, wcy)
+        win, truth = lens_rects(x, y, w, h, self.zoom, mon,
+                                center=(wcx, wcy))
+
+        # Content patience: while the hand moves, the picture holds still
+        # (an offset absorbs what truth would have panned) so it can be
+        # READ; as the hand settles the offset drains away and the pixel
+        # under the cursor is the exact click point again before any
+        # pinch can land. The brake is an explicit "lock it now".
+        tl = (float(truth[0]), float(truth[1]))
+        if self._prev_truth is not None:
+            ox = self._src_off[0] + (self._prev_truth[0] - tl[0])
+            oy = self._src_off[1] + (self._prev_truth[1] - tl[1])
+            lock = 1.0 - smoothstep(self.LOCK_V[0] * s, self.LOCK_V[1] * s,
+                                    self._v_ema)
+            if brake >= 0.5:
+                lock = 1.0
+            tau = (self.TRUTH_TAU_MOVE
+                   + (self.TRUTH_TAU_LOCK - self.TRUTH_TAU_MOVE) * lock)
+            decay = math.exp(-dt / tau)
+            cap = self.OFF_CAP_PX
+            ox = _clamp(ox * decay, -cap, cap)
+            oy = _clamp(oy * decay, -cap, cap)
+        else:
+            ox = oy = 0.0
+        self._prev_truth = tl
+        src_w = truth[2] - truth[0]
+        src_h = truth[3] - truth[1]
+        ml, mt, mr, mb = mon
+        sl = int(_clamp(int(round(tl[0] + ox)), ml, max(ml, mr - src_w)))
+        st = int(_clamp(int(round(tl[1] + oy)), mt, max(mt, mb - src_h)))
+        self._src_off = (sl - tl[0], st - tl[1])
+        return alpha, (w, h), win, (sl, st, sl + src_w, st + src_h)
 
 
 # ------------------------------------------------------------ win32 window ---

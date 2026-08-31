@@ -232,6 +232,65 @@ m.reset()
 check("reset() forgets everything", m.u == 0.0 and m._last is None
       and m._calm_s == 0.0)
 
+# ================== reading while moving (patient content) ==================
+# While the hand drifts, the picture holds still enough to READ — the
+# window glides, the content lags truth — and the moment the hand
+# settles, the pixel under the cursor is the exact click point again.
+
+
+def q_err(frame, x, y, zoom):
+    """How far the pixel under the cursor is from the truth, in px."""
+    _a, _wh, win, src = frame
+    qx = src[0] + (x - win[0]) / zoom
+    qy = src[1] + (y - win[1]) / zoom
+    return max(abs(qx - x), abs(qy - y))
+
+
+m = LensModel()
+frames, pos, t = settle(m, (800.0, 700.0), 0.0)
+check("at rest the content is truthful", q_err(frames[-1], *pos, m.zoom) <= 2.0,
+      f"err={q_err(frames[-1], *pos, m.zoom):.1f}px")
+
+# drift at reading speed: content must lag truth (hold still-ish), the
+# cursor must stay inside the glass, and the lie must stay bounded
+x, y = pos
+drift_ok = True
+for _ in range(int(0.8 / DT)):
+    t += DT
+    x += 130.0 * DT
+    f = m.update(x, y, t, MON)
+    if f is None:
+        continue
+    _a, _wh, win, _s = f
+    if not (win[0] < x < win[2] and win[1] < y < win[3]):
+        drift_ok = False
+off = max(abs(m._src_off[0]), abs(m._src_off[1]))
+check("drifting content lags truth so it can be read",
+      off > 15.0, f"lag={off:.1f}px")
+check("...but the lie is bounded", off <= LensModel.OFF_CAP_PX + 1.0,
+      f"lag={off:.1f}px")
+check("...and the cursor never leaves the glass", drift_ok)
+
+# settle: truth glides back before any pinch could finish
+for _ in range(int(0.5 / DT)):
+    t += DT
+    f = m.update(x, y, t, MON)
+check("once the hand settles, truth is back under the cursor",
+      f is not None and q_err(f, x, y, m.zoom) <= 2.0,
+      f"err={f and q_err(f, x, y, m.zoom):.1f}px")
+
+# the brake is an explicit truth lock, even while still moving
+m = LensModel()
+_, pos, t = settle(m, (800.0, 700.0), 0.0)
+x, y = pos
+for _ in range(int(0.5 / DT)):
+    t += DT
+    x += 130.0 * DT
+    f = m.update(x, y, t, MON, brake=1.0)
+check("a brake squeeze locks truth even mid-drift",
+      f is not None and q_err(f, x, y, m.zoom) <= 12.0,
+      f"err={f and q_err(f, x, y, m.zoom):.1f}px")
+
 # ========================== live tuning + junk config ========================
 m = LensModel()
 m.apply_params({"zoom": 4.0, "size_frac": 0.30})
