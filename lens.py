@@ -99,26 +99,40 @@ class LensModel:
     SPEED_TAU = 0.08      # EMA on the raw speed estimate (s)
     SHOW_TAU = 0.22       # ease toward visible: deliberate
     HIDE_TAU = 0.06       # ease toward hidden: get out of the way
-    DWELL_S = 0.12        # calm required before blooming from hidden
+    DWELL_S = 0.25        # calm required before appearing from hidden
     ALPHA_BAND = (0.20, 0.70)   # u range over which opacity rises
     SIZE_FLOOR = 0.86     # size at u=0, as a share of full size
     HIDE_ALPHA = 12       # below this the window is simply hidden
     REF_H = 1440.0        # speeds are quoted at this short-side, in px
     ASPECT = 4.0 / 3.0    # labels are horizontal; a reading lens is wide
+    # PRESENCE IS A SWITCH, NOT A DIMMER. Tying opacity continuously to
+    # speed made ordinary mouse-moving — which lives between the two
+    # thresholds — breathe the lens in and out. Now: appear only after a
+    # genuine settle (below aim_speed for DWELL_S, or a brake squeeze),
+    # stay FULLY solid through everything short of a real travel flick
+    # (above travel_speed), then leave fast. The huge band between the
+    # thresholds is deliberate hysteresis — inside it nothing changes.
+    #
     # Reading while moving: the window glides after the cursor on a soft
     # spring, and the CONTENT holds still while the hand is in motion —
     # like a page under a magnifying glass — then truth glides back in as
-    # the hand slows, well before a pinch can complete. The cursor is
-    # only honest when it needs to be: at click time.
+    # the hand settles, well before a pinch can complete.
     WIN_TAU = 0.12        # window spring (s)
     CURSOR_KEEP = 0.70    # cursor stays within this share of half-extent
     TRUTH_TAU_LOCK = 0.05   # truth pull when the hand has settled
     TRUTH_TAU_MOVE = 0.60   # content patience while the hand moves
-    LOCK_V = (40.0, 140.0)  # px/s (at REF_H): settled .. clearly moving
-    OFF_CAP_PX = 120.0      # the content may lag truth by at most this
+    # "Settled" is judged by NET travel over a recent window, not by
+    # instantaneous speed: real-hand tremor wobbles fast but goes
+    # nowhere, and judging by speed alone meant truth never fully locked
+    # for a real hand — the arrow sat over stale content while Windows
+    # highlighted the true point somewhere else. Tremor nets ~0; reading
+    # drift genuinely travels; only the latter should hold the lock off.
+    NET_WIN_S = 0.35        # how far back the net-travel window reaches
+    LOCK_NET = (12.0, 40.0)  # px net (at REF_H): settled .. clearly moving
+    OFF_CAP_PX = 60.0       # the content may lag truth by at most this
 
     def __init__(self, enabled=True, zoom=2.5, size_frac=0.22,
-                 aim_speed=180.0, travel_speed=950.0):
+                 aim_speed=140.0, travel_speed=950.0):
         self.enabled = bool(enabled)
         self.zoom = float(zoom)
         self.size_frac = float(size_frac)
@@ -128,9 +142,11 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None          # (x, y, t)
+        self._present = False      # the bistable visible/hidden switch
         self._win_c = None         # lazy window centre (floats)
         self._src_off = (0.0, 0.0)  # content's lag behind truth (px)
         self._prev_truth = None    # last truthful src origin
+        self._pos_hist = []        # (t, x, y) trail for net-travel lock
         self.apply_params({})      # clamp whatever the caller passed
 
     # -- live tuning ------------------------------------------------------
@@ -161,9 +177,11 @@ class LensModel:
         self._v_ema = 0.0
         self._calm_s = 0.0
         self._last = None
+        self._present = False
         self._win_c = None
         self._src_off = (0.0, 0.0)
         self._prev_truth = None
+        self._pos_hist = []
 
     # -- per-tick ---------------------------------------------------------
     def update(self, x, y, now, mon, active=True, brake=0.0):
@@ -197,22 +215,36 @@ class LensModel:
             return None
         v = jump / dt
         self._v_ema += (v - self._v_ema) * (1.0 - math.exp(-dt / self.SPEED_TAU))
+        # Net-travel trail: the oldest kept sample sits ~NET_WIN_S back,
+        # so hypot to it is "how far did the hand actually GO", immune to
+        # tremor that moves fast but goes nowhere.
+        self._pos_hist.append((now, x, y))
+        cut = now - self.NET_WIN_S
+        while len(self._pos_hist) > 1 and self._pos_hist[1][0] <= cut:
+            self._pos_hist.pop(0)
+        net = math.hypot(x - self._pos_hist[0][1], y - self._pos_hist[0][2])
 
         s = short / self.REF_H
         lo, hi = self.aim_speed * s, self.travel_speed * s
         brake = _clamp(brake, 0.0, 1.0)
-        u_target = max(1.0 - smoothstep(lo, hi, self._v_ema), brake)
+        # The bistable presence switch. Appearing demands a genuine
+        # settle (or a brake squeeze — explicit intent skips the wait,
+        # and a flick reversal's one quiet frame never accumulates
+        # enough calm). Leaving demands a genuine travel flick. The wide
+        # band between the two is hysteresis: ordinary mouse-moving
+        # lives there, and inside it the lens simply keeps its state.
         if not (self.enabled and active):
-            u_target = 0.0
+            self._present = False
             self._calm_s = 0.0    # a fresh engage must earn its dwell
-        elif self.u < 0.02:
-            # From fully hidden the bloom needs a beat of genuine calm —
-            # a flick reversal passes through zero speed for a frame and
-            # must not flash the lens. A squeezed brake is explicit
-            # intent and skips the wait.
+        elif self._present:
+            if self._v_ema > hi and brake < 0.5:
+                self._present = False
+                self._calm_s = 0.0
+        else:
             self._calm_s = self._calm_s + dt if self._v_ema < lo else 0.0
-            if self._calm_s < self.DWELL_S and brake < 0.5:
-                u_target = 0.0
+            if self._calm_s >= self.DWELL_S or brake >= 0.5:
+                self._present = True
+        u_target = 1.0 if self._present else 0.0
         tau = self.SHOW_TAU if u_target > self.u else self.HIDE_TAU
         self.u += (u_target - self.u) * (1.0 - math.exp(-dt / tau))
 
@@ -261,8 +293,8 @@ class LensModel:
         if self._prev_truth is not None:
             ox = self._src_off[0] + (self._prev_truth[0] - tl[0])
             oy = self._src_off[1] + (self._prev_truth[1] - tl[1])
-            lock = 1.0 - smoothstep(self.LOCK_V[0] * s, self.LOCK_V[1] * s,
-                                    self._v_ema)
+            lock = 1.0 - smoothstep(self.LOCK_NET[0] * s,
+                                    self.LOCK_NET[1] * s, net)
             if brake >= 0.5:
                 lock = 1.0
             tau = (self.TRUTH_TAU_MOVE

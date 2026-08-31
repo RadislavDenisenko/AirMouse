@@ -291,6 +291,46 @@ check("a brake squeeze locks truth even mid-drift",
       f is not None and q_err(f, x, y, m.zoom) <= 12.0,
       f"err={f and q_err(f, x, y, m.zoom):.1f}px")
 
+# REAL hands never hold still: they tremble a few px at frame rate —
+# fast in px/s, zero in net travel. Truth must still fully lock, or the
+# arrow sits over stale content while Windows highlights the true point
+# somewhere else (the "invisible mouse" bug, found by live use).
+m = LensModel()
+_, pos, t = settle(m, (800.0, 700.0), 0.0)
+x, y = pos
+for i in range(int(0.6 / DT)):           # drift away with tremor riding
+    t += DT
+    x += 130.0 * DT
+    f = m.update(x + (2.0 if i % 2 else -2.0), y, t, MON)
+for i in range(int(0.6 / DT)):           # "stop": tremor only, no travel
+    t += DT
+    f = m.update(x + (2.0 if i % 2 else -2.0),
+                 y + (1.5 if i % 3 else -1.5), t, MON)
+check("truth locks through real-hand tremor",
+      f is not None and q_err(f, x, y, m.zoom) <= 5.0,
+      f"err={f and q_err(f, x, y, m.zoom):.1f}px")
+
+# ===================== presence is a switch, not a dimmer ====================
+# Ordinary mouse-moving lives BETWEEN the two thresholds. A visible lens
+# must stay fully solid there, and a hidden one must stay hidden — the
+# old continuous mapping made the lens breathe in and out with speed.
+m = LensModel()
+frames, pos, t = settle(m, (800.0, 700.0), 0.0)
+x, y = pos
+solid = True
+for _ in range(int(1.0 / DT)):
+    t += DT
+    x += 500.0 * DT                      # mid-band: normal repositioning
+    f = m.update(x, y, t, MON)
+    if f is None or f[0] != 255:
+        solid = False
+check("normal mouse-moving never breathes a visible lens", solid)
+
+m = LensModel()
+frames, _, _ = run(m, 1.5, 500.0)        # mid-band from hidden
+check("...and never summons a hidden one",
+      all(f is None for f in frames))
+
 # ========================== live tuning + junk config ========================
 m = LensModel()
 m.apply_params({"zoom": 4.0, "size_frac": 0.30})
@@ -299,7 +339,7 @@ check("zoom and size retune live", m.zoom == 4.0 and m.size_frac == 0.30)
 m.apply_params({"zoom": -3, "size_frac": 99, "aim_speed": "garbage",
                 "travel_speed": None, "unknown_key": True})
 check("junk values clamp or bounce instead of applying",
-      m.zoom >= 1.0 and m.size_frac <= 1.0 and m.aim_speed == 180.0,
+      m.zoom >= 1.0 and m.size_frac <= 1.0 and m.aim_speed == 140.0,
       f"zoom={m.zoom} frac={m.size_frac} aim={m.aim_speed}")
 
 # at the very top of the size range the lens IS the screen height (within
