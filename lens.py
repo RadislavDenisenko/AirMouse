@@ -132,7 +132,7 @@ class LensModel:
     OFF_CAP_PX = 60.0       # the content may lag truth by at most this
 
     def __init__(self, enabled=True, zoom=2.5, size_frac=0.22,
-                 aim_speed=140.0, travel_speed=950.0):
+                 aim_speed=140.0, travel_speed=1300.0):
         self.enabled = bool(enabled)
         self.zoom = float(zoom)
         self.size_frac = float(size_frac)

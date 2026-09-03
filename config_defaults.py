@@ -160,7 +160,7 @@ DEFAULT_CONFIG = {
     # travel_speed dismisses it. Tying opacity continuously to speed made
     # ordinary mouse-moving breathe the lens in and out.
     "lens": {"enabled": True, "zoom": 2.5, "size_frac": 0.22,
-             "aim_speed": 140.0, "travel_speed": 950.0},
+             "aim_speed": 140.0, "travel_speed": 1300.0},
     "launcher": {"hold_s": 0.3, "cooldown_s": 1.0,
                  "commands": ["", "", "", ""],
                  "labels": ["", "", "", ""]},
